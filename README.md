@@ -1,6 +1,6 @@
 # Learning OpenGL...
 
-- [ ]Getting Started
+- [x]Getting Started
 - [ ]Lighting
 - [ ]Model Loading
 - [ ]Advanced OpenGL
