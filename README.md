@@ -1,7 +1,7 @@
 # Learning OpenGL...
 
 - [x] Getting Started
-- [ ] Lighting
+- [x] Lighting
 - [ ] Model Loading
 - [ ] Advanced OpenGL
 - [ ] Advanced Lighting
