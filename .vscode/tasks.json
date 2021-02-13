@@ -13,6 +13,7 @@
                 "src/\\*.cpp",
                 "src/glad.c",
                 "-lglfw3dll",
+                "-lassimp",
                 "-o",
                 "${workspaceFolder}/Launch.exe"
             ],
