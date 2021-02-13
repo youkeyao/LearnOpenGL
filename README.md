@@ -2,7 +2,7 @@
 
 - [x] Getting Started
 - [x] Lighting
-- [ ] Model Loading
+- [x] Model Loading
 - [ ] Advanced OpenGL
 - [ ] Advanced Lighting
 - [ ] PBR
