@@ -83,8 +83,7 @@ int main()
     // load models
     // -----------
     Model ourModel("resources/objects/nanosuit/nanosuit.obj");
-
-    
+ 
     // draw in wireframe
     //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
@@ -110,6 +109,32 @@ int main()
         // don't forget to enable shader before setting uniforms
         ourShader.use();
 
+        ourShader.setVec3("viewPos", camera.Position);
+
+        ourShader.setVec3("dirLight.direction", -0.2f, -1.0f, -0.3f);
+        ourShader.setVec3("dirLight.ambient", 0.05f, 0.05f, 0.05f);
+        ourShader.setVec3("dirLight.diffuse", 0.4f, 0.4f, 0.4f);
+        ourShader.setVec3("dirLight.specular", 0.5f, 0.5f, 0.5f);
+
+        ourShader.setVec3("pointLights[0].position", 0.0f, 5.0f, 5.0f);
+        ourShader.setVec3("pointLights[0].ambient", 0.05f, 0.05f, 0.05f);
+        ourShader.setVec3("pointLights[0].diffuse", 0.8f, 0.8f, 0.8f);
+        ourShader.setVec3("pointLights[0].specular", 1.0f, 1.0f, 1.0f);
+        ourShader.setFloat("pointLights[0].constant", 1.0f);
+        ourShader.setFloat("pointLights[0].linear", 0.09);
+        ourShader.setFloat("pointLights[0].quadratic", 0.032);
+
+        ourShader.setVec3("spotLight.position", camera.Position);
+        ourShader.setVec3("spotLight.direction", camera.Front);
+        ourShader.setVec3("spotLight.ambient", 0.0f, 0.0f, 0.0f);
+        ourShader.setVec3("spotLight.diffuse", 1.0f, 1.0f, 1.0f);
+        ourShader.setVec3("spotLight.specular", 1.0f, 1.0f, 1.0f);
+        ourShader.setFloat("spotLight.constant", 1.0f);
+        ourShader.setFloat("spotLight.linear", 0.09);
+        ourShader.setFloat("spotLight.quadratic", 0.032);
+        ourShader.setFloat("spotLight.cutOff", glm::cos(glm::radians(12.5f)));
+        ourShader.setFloat("spotLight.outerCutOff", glm::cos(glm::radians(15.0f)));
+
         // view/projection transformations
         glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
         glm::mat4 view = camera.GetViewMatrix();
@@ -122,7 +147,6 @@ int main()
         model = glm::scale(model, glm::vec3(1.0f, 1.0f, 1.0f));	// it's a bit too big for our scene, so scale it down
         ourShader.setMat4("model", model);
         ourModel.Draw(ourShader);
-
 
         // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
         // -------------------------------------------------------------------------------
