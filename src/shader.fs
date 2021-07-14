@@ -1,49 +1,54 @@
 #version 330 core
-layout (location = 0) out vec4 FragColor;
-layout (location = 1) out vec4 BrightColor;
+out vec4 FragColor;
 
-in VS_OUT {
-    vec3 FragPos;
-    vec3 Normal;
-    vec2 TexCoords;
-} fs_in;
+in vec2 TexCoords;
+
+uniform sampler2D gPosition;
+uniform sampler2D gNormal;
+uniform sampler2D gAlbedoSpec;
 
 struct Light {
     vec3 Position;
     vec3 Color;
+    
+    float Linear;
+    float Quadratic;
+    float Radius;
 };
-
-uniform Light lights[4];
-uniform sampler2D diffuseTexture;
+const int NR_LIGHTS = 32;
+uniform Light lights[NR_LIGHTS];
 uniform vec3 viewPos;
 
 void main()
-{           
-    vec3 color = texture(diffuseTexture, fs_in.TexCoords).rgb;
-    vec3 normal = normalize(fs_in.Normal);
-    // ambient
-    vec3 ambient = 0.0 * color;
-    // lighting
-    vec3 lighting = vec3(0.0);
-    vec3 viewDir = normalize(viewPos - fs_in.FragPos);
-    for(int i = 0; i < 4; i++)
+{             
+    // retrieve data from gbuffer
+    vec3 FragPos = texture(gPosition, TexCoords).rgb;
+    vec3 Normal = texture(gNormal, TexCoords).rgb;
+    vec3 Diffuse = texture(gAlbedoSpec, TexCoords).rgb;
+    float Specular = texture(gAlbedoSpec, TexCoords).a;
+    
+    // then calculate lighting as usual
+    vec3 lighting  = Diffuse * 0.1; // hard-coded ambient component
+    vec3 viewDir  = normalize(viewPos - FragPos);
+    for(int i = 0; i < NR_LIGHTS; ++i)
     {
-        // diffuse
-        vec3 lightDir = normalize(lights[i].Position - fs_in.FragPos);
-        float diff = max(dot(lightDir, normal), 0.0);
-        vec3 result = lights[i].Color * diff * color;      
-        // attenuation (use quadratic as we have gamma correction)
-        float distance = length(fs_in.FragPos - lights[i].Position);
-        result *= 1.0 / (distance * distance);
-        lighting += result;
-                
-    }
-    vec3 result = ambient + lighting;
-    // check whether result is higher than some threshold, if so, output as bloom threshold color
-    float brightness = dot(result, vec3(0.2126, 0.7152, 0.0722));
-    if(brightness > 1.0)
-        BrightColor = vec4(result, 1.0);
-    else
-        BrightColor = vec4(0.0, 0.0, 0.0, 1.0);
-    FragColor = vec4(result, 1.0);
+        // calculate distance between light source and current fragment
+        float distance = length(lights[i].Position - FragPos);
+        if(distance < lights[i].Radius)
+        {
+            // diffuse
+            vec3 lightDir = normalize(lights[i].Position - FragPos);
+            vec3 diffuse = max(dot(Normal, lightDir), 0.0) * Diffuse * lights[i].Color;
+            // specular
+            vec3 halfwayDir = normalize(lightDir + viewDir);  
+            float spec = pow(max(dot(Normal, halfwayDir), 0.0), 16.0);
+            vec3 specular = lights[i].Color * spec * Specular;
+            // attenuation
+            float attenuation = 1.0 / (1.0 + lights[i].Linear * distance + lights[i].Quadratic * distance * distance);
+            diffuse *= attenuation;
+            specular *= attenuation;
+            lighting += diffuse + specular;
+        }
+    }    
+    FragColor = vec4(lighting, 1.0);
 }
