@@ -5,5 +5,5 @@
 - [x] Model Loading
 - [x] Advanced OpenGL
 - [x] Advanced Lighting
-- [ ] PBR
+- [x] PBR
 - [ ] In_Practice
