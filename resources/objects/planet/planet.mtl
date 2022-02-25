@@ -10,4 +10,4 @@ Ni 1.000000
 d 1.000000
 illum 2
 map_Kd planet_Quom1200.png
-map_Bump planet_Quom1200.png
+norm planet_Quom1200.png
