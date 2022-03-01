@@ -1,7 +1,7 @@
-#ifndef MODEL_H
-#define MODEL_H
+#ifndef SCENE_H
+#define SCENE_H
 
-#include <glad/glad.h> 
+#include <glad/glad.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -26,8 +26,7 @@ struct Texture {
     string name;
 };
 
-struct Material
-{
+struct Material {
     glm::vec3 ambient;          // (id, width, height)
     glm::vec3 diffuse;          // (id, width, height)
     glm::vec3 specular;         // (id, width, height)
@@ -50,53 +49,138 @@ struct Triangle {
     Material material;
 };
 
+struct BVHNode {
+    float left, right;          // index of children
+    float n;                    // number of triangles in node
+    float index1, index2;       // left and right index of triangles
+    float parent;
+    glm::vec3 AA, BB;
+};
+
+// help function
+// ------------------
+bool cmpx(const Triangle& t1, const Triangle& t2)
+{
+    glm::vec3 center1 = (t1.p[0] + t1.p[1] + t1.p[2]);
+    glm::vec3 center2 = (t2.p[0] + t2.p[1] + t2.p[2]);
+    return center1.x < center2.x;
+}
+bool cmpy(const Triangle& t1, const Triangle& t2)
+{
+    glm::vec3 center1 = (t1.p[0] + t1.p[1] + t1.p[2]);
+    glm::vec3 center2 = (t2.p[0] + t2.p[1] + t2.p[2]);
+    return center1.y < center2.y;
+}
+bool cmpz(const Triangle& t1, const Triangle& t2)
+{
+    glm::vec3 center1 = (t1.p[0] + t1.p[1] + t1.p[2]);
+    glm::vec3 center2 = (t2.p[0] + t2.p[1] + t2.p[2]);
+    return center1.z < center2.z;
+}
+glm::vec3 minVec3(glm::vec3 v1, glm::vec3 v2, glm::vec3 v3)
+{
+    float minx = min(v1.x, min(v2.x, v3.x));
+    float miny = min(v1.y, min(v2.y, v3.y));
+    float minz = min(v1.z, min(v2.z, v3.z));
+    return glm::vec3(minx, miny, minz);
+}
+glm::vec3 maxVec3(glm::vec3 v1, glm::vec3 v2, glm::vec3 v3)
+{
+    float maxx = max(v1.x, max(v2.x, v3.x));
+    float maxy = max(v1.y, max(v2.y, v3.y));
+    float maxz = max(v1.z, max(v2.z, v3.z));
+    return glm::vec3(maxx, maxy, maxz);
+}
+
+// loading a scene from obj file
+// ---------------------------
 class Scene
 {
 public:
     vector<Texture> textures_loaded;
     vector<Triangle> triangles;
+    vector<BVHNode> bvhNodes;
     vector<glm::vec3> vertices;
     vector<unsigned int> indices;
     glm::mat4 model;
     string directory;
     bool gammaCorrection;
-    unsigned int VAO, VBO, EBO, trianglesTextureBuffer, texture_array;
+    unsigned int VAO, VBO, EBO, trianglesTextureBuffer, bvhTextureBuffer, texture_array;
     const int MAXWIDTH = 4096, MAXHEIGHT = 4096, MAXNUM = 32;
 
     // constructor, expects a filepath to a 3D model.
     Scene(string const &path, unsigned int pFlags, glm::mat4 model = glm::mat4(1.0f), bool gamma = false) : model(model), gammaCorrection(gamma)
     {
         glGenTextures(1, &texture_array);
+        glActiveTexture(GL_TEXTURE0 + texture_array);
         glBindTexture(GL_TEXTURE_2D_ARRAY, texture_array);
         glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, MAXWIDTH, MAXHEIGHT, MAXNUM, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 
         loadScene(path, pFlags);
 
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+        glActiveTexture(0);
+
+        buildBVHwithSAH(0, triangles.size() - 1, 1);
 
         loadTriangles();
+        loadBVHNodes();
+    }
+
+    void loadShader(Shader &shader)
+    {
+        // int width, height, nrComponents;
+        // unsigned char *data = stbi_load("resources/textures/bricks2.jpg", &width, &height, &nrComponents, 0);
+        // unsigned int hdrTexture;
+        // if (data)
+        // {
+        //     glGenTextures(1, &hdrTexture);
+        //     glActiveTexture(GL_TEXTURE0 + hdrTexture);
+        //     glBindTexture(GL_TEXTURE_2D, hdrTexture);
+        //     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+
+        //     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        //     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        //     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        //     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        //     glGenerateMipmap(GL_TEXTURE_2D);
+
+        //     glActiveTexture(0);
+
+        //     stbi_image_free(data);
+        // }
+        // else {
+        //     exit(1);
+        // }
+        // // stbi_image_free(data);
+        // shader.setInt("test", hdrTexture);
+
+        shader.setInt("texturesArray", texture_array);
+        shader.setInt("triangles", trianglesTextureBuffer);
+        shader.setInt("nTriangles", triangles.size());
+        shader.setInt("bvhNodes", bvhTextureBuffer);
+        shader.setInt("nNodes", bvhNodes.size());
     }
 
     // draws the scene
-    void Draw(Shader &shader)
+    void draw()
     {
-        // active proper texture unit before binding
-        
-        // now set the sampler to the correct texture unit
-        glActiveTexture(GL_TEXTURE0 + trianglesTextureBuffer - 1);
-        glBindTexture(GL_TEXTURE_BUFFER, trianglesTextureBuffer);
-        shader.setInt("triangles", trianglesTextureBuffer - 1);
-        shader.setInt("nTriangles", triangles.size());
+        // glActiveTexture(GL_TEXTURE0 + texture_array);
+        // glBindTexture(GL_TEXTURE_2D_ARRAY, texture_array);
+        // glActiveTexture(GL_TEXTURE0 + trianglesTextureBuffer);
+        // glBindTexture(GL_TEXTURE_BUFFER, trianglesTextureBuffer);
+        // glActiveTexture(GL_TEXTURE0 + bvhTextureBuffer);
+        // glBindTexture(GL_TEXTURE_2D_ARRAY, bvhTextureBuffer);
 
         glBindVertexArray(VAO);
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
 
-        glActiveTexture(0);
+        // glActiveTexture(0);
     }
     
 private:
@@ -119,17 +203,30 @@ private:
         setupScene();
     }
 
-    // load triangles into shader
+    // load triangles into texture buffer
     void loadTriangles()
     {
-        GLuint tbo0;
-        glGenBuffers(1, &tbo0);
-        glBindBuffer(GL_TEXTURE_BUFFER, tbo0);
+        GLuint tbo;
+        glGenBuffers(1, &tbo);
+        glBindBuffer(GL_TEXTURE_BUFFER, tbo);
         glBufferData(GL_TEXTURE_BUFFER, triangles.size() * sizeof(Triangle), &triangles[0], GL_STATIC_DRAW);
         glGenTextures(1, &trianglesTextureBuffer);
-        glActiveTexture(GL_TEXTURE0 + trianglesTextureBuffer - 1);
+        glActiveTexture(GL_TEXTURE0 + trianglesTextureBuffer);
         glBindTexture(GL_TEXTURE_BUFFER, trianglesTextureBuffer);
-        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, tbo0);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, tbo);
+        glActiveTexture(0);
+    }
+
+    void loadBVHNodes()
+    {
+        GLuint tbo;
+        glGenBuffers(1, &tbo);
+        glBindBuffer(GL_TEXTURE_BUFFER, tbo);
+        glBufferData(GL_TEXTURE_BUFFER, bvhNodes.size() * sizeof(BVHNode), &bvhNodes[0], GL_STATIC_DRAW);
+        glGenTextures(1, &bvhTextureBuffer);
+        glActiveTexture(GL_TEXTURE0 + bvhTextureBuffer);
+        glBindTexture(GL_TEXTURE_BUFFER, bvhTextureBuffer);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, tbo);
         glActiveTexture(0);
     }
 
@@ -221,6 +318,7 @@ private:
         }
     }
 
+    // load material from file or rgb into texture
     glm::vec3 loadMaterialTextures(aiMaterial *material, aiTextureType type, const char *pKey = nullptr, unsigned int key_type = 0, unsigned int idx = 0)
     {
         if (material->GetTextureCount(type)) {
@@ -280,13 +378,15 @@ private:
         return glm::mat3(T, B, N);
     }
 
+    // generate 1x1 texture from rgb
     glm::vec3 TextureFromRGB(float r, float g, float b)
     {
-        unsigned char data[] = { (unsigned char)(r * 255), (unsigned char)(g * 255), (unsigned char)(b * 255), 255 };
+        unsigned char data[] = { (unsigned char)(r * 255), (unsigned char)(g * 255), (unsigned char)(b * 255) };
         glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, textures_loaded.size(), 1, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, data);
         return glm::vec3(textures_loaded.size(), 1 / (float)MAXWIDTH, 1 / (float)MAXHEIGHT);
     }
 
+    // load texture from file
     glm::vec3 TextureFromFile(const char *path)
     {
         string filename = string(path);
@@ -314,6 +414,7 @@ private:
         }
     }
 
+    // change aiColor3D type to string
     string color2string(aiColor3D color)
     {
         string s;
@@ -321,6 +422,111 @@ private:
         sprintf(buf, "%.4f %.4f %.4f", color.r, color.g, color.b);
         s.assign(buf);
         return s;
+    }
+
+    // BVH with SAH
+    int buildBVHwithSAH(int l, int r, int n) {
+        if (l > r) return 0;
+
+        BVHNode root;
+        bvhNodes.push_back(root);
+        int id = bvhNodes.size() - 1;
+        bvhNodes[id].left = bvhNodes[id].right = bvhNodes[id].n = bvhNodes[id].index1 = bvhNodes[id].index2 = bvhNodes[id].parent = 0;
+        bvhNodes[id].AA = triangles[l].p[0];
+        bvhNodes[id].BB = triangles[l].p[0];
+
+        // count AABB
+        for (int i = l; i <= r; i++) {
+            bvhNodes[id].AA = minVec3(bvhNodes[id].AA, triangles[i].p[0], triangles[i].p[1]);
+            bvhNodes[id].AA = minVec3(bvhNodes[id].AA, triangles[i].p[1], triangles[i].p[2]);
+            bvhNodes[id].BB = maxVec3(bvhNodes[id].BB, triangles[i].p[0], triangles[i].p[1]);
+            bvhNodes[id].BB = maxVec3(bvhNodes[id].BB, triangles[i].p[1], triangles[i].p[2]);
+        }
+
+        // nTriangles <= n
+        if ((r - l + 1) <= n) {
+            bvhNodes[id].n = r - l + 1;
+            bvhNodes[id].index1 = l;
+            bvhNodes[id].index2 = r;
+            return id;
+        }
+
+        // build
+        int minCost = 0;
+        int Axis = 0;
+        int Split = (l + r) / 2;
+        for (int axis = 0; axis < 3; axis ++) {
+            // sort in x，y，z axis
+            if (axis == 0) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpx);
+            if (axis == 1) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpy);
+            if (axis == 2) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpz);
+
+            std::vector<glm::vec3> leftAA = {minVec3(triangles[l].p[0], triangles[l].p[1], triangles[l].p[2])};
+            std::vector<glm::vec3> leftBB = {maxVec3(triangles[l].p[0], triangles[l].p[1], triangles[l].p[2])};
+            for (int i = l + 1; i < r; i ++) {
+                glm::vec3 AA = minVec3(leftAA[i - l - 1], triangles[i].p[0], triangles[i].p[1]);
+                AA = minVec3(AA, triangles[i].p[1], triangles[i].p[2]);
+                glm::vec3 BB = maxVec3(leftBB[i - l - 1], triangles[i].p[0], triangles[i].p[1]);
+                BB = maxVec3(BB, triangles[i].p[1], triangles[i].p[2]);
+
+                leftAA.push_back(AA);
+                leftBB.push_back(BB);
+            }
+
+            std::vector<glm::vec3> rightAA = {minVec3(triangles[r].p[0], triangles[r].p[1], triangles[r].p[2])};
+            std::vector<glm::vec3> rightBB = {maxVec3(triangles[r].p[0], triangles[r].p[1], triangles[r].p[2])};
+            for (int i = r - 1; i > l; i --) {
+                glm::vec3 AA = minVec3(rightAA[r - i - 1], triangles[i].p[0], triangles[i].p[1]);
+                AA = minVec3(AA, triangles[i].p[1], triangles[i].p[2]);
+                glm::vec3 BB = maxVec3(rightBB[r - i - 1], triangles[i].p[0], triangles[i].p[1]);
+                BB = maxVec3(BB, triangles[i].p[1], triangles[i].p[2]);
+
+                rightAA.push_back(AA);
+                rightBB.push_back(BB);
+            }
+
+            // search for split
+            float cost = 0;
+            int split = l;
+            for (int i = l; i < r; i ++) {
+                float lenx = leftBB[i - l].x - leftAA[i - l].x;
+                float leny = leftBB[i - l].y - leftAA[i - l].y;
+                float lenz = leftBB[i - l].z - leftAA[i - l].z;
+                float leftS = 2.0 * ((lenx * leny) + (lenx * lenz) + (leny * lenz));
+                float leftCost = leftS * (i - l + 1);
+
+                lenx = rightBB[r - 1 - i].x - rightAA[r - 1 - i].x;
+                leny = rightBB[r - 1 - i].y - rightAA[r - 1 - i].y;
+                lenz = rightBB[r - 1 - i].z - rightAA[r - 1 - i].z;
+                float rightS = 2.0 * ((lenx * leny) + (lenx * lenz) + (leny * lenz));
+                float rightCost = rightS * (r - i);
+
+                float totalCost = leftCost + rightCost;
+                if (cost == 0 || totalCost < cost) {
+                    cost = totalCost;
+                    split = i;
+                }
+            }
+            if (minCost == 0 || cost < minCost) {
+                minCost = cost;
+                Axis = axis;
+                Split = split;
+            }
+        }
+
+        if (Axis == 0) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpx);
+        if (Axis == 1) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpy);
+        if (Axis == 2) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpz);
+
+        int left  = buildBVHwithSAH(l, Split, n);
+        int right = buildBVHwithSAH(Split + 1, r, n);
+
+        bvhNodes[left].parent = id;
+        bvhNodes[right].parent = id;
+        bvhNodes[id].left = left;
+        bvhNodes[id].right = right;
+
+        return id;
     }
 };
 #endif

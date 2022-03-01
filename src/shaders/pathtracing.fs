@@ -1,28 +1,33 @@
 #version 330 core
+layout (location = 0) out vec4 FragColor;
 
-#define SAMPLENUM 1
+in vec3 FragCoord;
+in mat4 inverse_projection;
+in mat4 inverse_view;
 
-out vec4 FragColor;
-
+uniform bool isRealTime;
 uniform float screenWidth;
 uniform float screenHeight;
-uniform mat4 projection;
-uniform mat4 view;
 
-uniform uint counter;
+uniform int frameCounter;
 
 uniform sampler2DArray texturesArray;
 uniform samplerBuffer triangles;
 uniform int nTriangles;
+uniform samplerBuffer bvhNodes;
+uniform int nNodes;
 
 uniform sampler2D lastFrame;
-
+uniform sampler2D fragPos;
+uniform sampler2D hdrMap;
 uniform vec3 viewPos;
 
-const float PI = 3.14159265359;
+#define STACKSIZE 64
+#define SAMPLENUM 1
+#define PI 3.14159265359
 
 struct Material {
-    vec3 ambient;
+    vec3 ambient;       // (id, width, height)
     vec3 diffuse;
     vec3 specular;
     vec3 emissive;
@@ -39,8 +44,16 @@ struct Triangle {
     vec3 n[3];
     vec2 texCoords[3];
     mat3 TBN[3];
-    vec3 normal;
-    vec3 height;
+    vec3 normal;        // (id, width, height)
+    vec3 height;        // (id, width, height)
+};
+
+struct BVHNode {
+    int left, right;
+    int n;
+    int index1, index2;
+    int parent;
+    vec3 AA, BB;
 };
 
 struct Ray {
@@ -59,6 +72,31 @@ struct HitResult {
     mat3 TBN;
     Material material;
 };
+
+// GPU random
+uint seed = uint(
+    uint(gl_FragCoord.x) * uint(1973) + 
+    uint(gl_FragCoord.y) * uint(9277) + 
+    uint(frameCounter) * uint(26699)) | uint(1);
+uint hash(inout uint seed)
+{
+    seed = uint(seed ^ uint(61)) ^ uint(seed >> uint(16));
+    seed *= uint(9);
+    seed = seed ^ (seed >> 4);
+    seed *= uint(0x27d4eb2d);
+    seed = seed ^ (seed >> 15);
+    return seed;
+}
+float rand()
+{
+    return float(hash(seed)) / 4294967296.0;
+}
+vec3 SampleHemisphere() {
+    float z = rand();
+    float r = max(0, sqrt(1.0 - z*z));
+    float phi = 2.0 * PI * rand();
+    return vec3(r * cos(phi), r * sin(phi), z);
+}
 
 Triangle getTriangle(int i)
 {
@@ -117,46 +155,21 @@ Material getMaterial(int i, vec2 texCoords)
     return m;
 }
 
-vec3 calcLerp(vec3 p1, vec3 p2, vec3 p3, vec3 P)
+BVHNode getBVHNode(int i)
 {
-    // float a = (-(P.x-p2.x)*(p3.y-p2.y) + (P.y-p2.y)*(p3.x-p2.x)) / (-(p1.x-p2.x-0.00005)*(p3.y-p2.y+0.00005) + (p1.y-p2.y+0.00005)*(p3.x-p2.x+0.00005));
-    // float b  = (-(P.x-p3.x)*(p1.y-p3.y) + (P.y-p3.y)*(p1.x-p3.x)) / (-(p2.x-p3.x-0.00005)*(p1.y-p3.y+0.00005) + (p2.y-p3.y+0.00005)*(p1.x-p3.x+0.00005));
-    // float c  = 1.0 - a - b;
+    int offset = i * 4;
+    BVHNode node;
 
-    // return vec3(a, b, c);
-    float a1, a2, b1, b2, c1, c2;
+    node.left = int(texelFetch(bvhNodes, offset).x);
+    node.right = int(texelFetch(bvhNodes, offset).y);
+    node.n = int(texelFetch(bvhNodes, offset).z);
+    node.index1 = int(texelFetch(bvhNodes, offset + 1).x);
+    node.index2 = int(texelFetch(bvhNodes, offset + 1).y);
+    node.parent = int(texelFetch(bvhNodes, offset + 1).z);
+    node.AA = texelFetch(bvhNodes, offset + 2).xyz;
+    node.BB = texelFetch(bvhNodes, offset + 3).xyz;
 
-    if (abs((p1.x - p3.x) * (p2.y - p3.y) - (p1.y - p3.y) * (p2.x - p3.x)) > 0.00001f) {
-        a1 = p1.x - p3.x;
-        a2 = p1.y - p3.y;
-        b1 = p2.x - p3.x;
-        b2 = p2.y - p3.y;
-        c1 = P.x - p3.x;
-        c2 = P.y - p3.y;
-    }
-    else if (abs((p1.x - p3.x) * (p2.z - p3.z) - (p1.z - p3.z) * (p2.x - p3.x)) > 0.00001f) {
-        a1 = p1.x - p3.x;
-        a2 = p1.z - p3.z;
-        b1 = p2.x - p3.x;
-        b2 = p2.z - p3.z;
-        c1 = P.x - p3.x;
-        c2 = P.z - p3.z;
-    }
-    else {
-        a1 = p1.y - p3.y;
-        a2 = p1.z - p3.z;
-        b1 = p2.y - p3.y;
-        b2 = p2.z - p3.z;
-        c1 = P.y - p3.y;
-        c2 = P.z - p3.z;
-    }
-
-    float d = a1 * b2 - a2 * b1;
-    float a = (c1 * b2 - c2 * b1) / d;
-    float b = (a1 * c2 - a2 * c1) / d;
-    float c = 1.0 - a - b;
-
-    return vec3(a, b, c);
+    return node;
 }
 
 HitResult hitTriangle(Triangle triangle, Ray ray)
@@ -166,54 +179,55 @@ HitResult hitTriangle(Triangle triangle, Ray ray)
     res.isHit = false;
     res.isInside = false;
 
-    vec3 p1 = triangle.p[0];
-    vec3 p2 = triangle.p[1];
-    vec3 p3 = triangle.p[2];
+    vec3 O = ray.startPoint;
+    vec3 D = ray.direction;
+    vec3 E1 = triangle.p[1] - triangle.p[0];
+    vec3 E2 = triangle.p[2] - triangle.p[0];
+    vec3 S1 = cross(D, E2);
 
-    vec3 S = ray.startPoint;
-    vec3 d = ray.direction;
-    vec3 N = normalize(cross(p2-p1, p3-p1));
+    float SE = dot(S1, E1);
+    // parallel
+    if (abs(SE) < 0.01f) return res;
 
-    if (dot(N, d) > 0.0f) {
-        N = -N;   
-        res.isInside = true;
-    }
+    float invdet = 1 / SE;
+    vec3 S = O - triangle.p[0];
 
-    if (abs(dot(N, d)) < 0.00001f) return res;
+    float b = dot(S1, S) * invdet;
+    // out of triangle
+    if (b < 0 || b > 1) return res;
 
-    float t = (dot(N, p1) - dot(S, N)) / dot(d, N);
+    vec3 S2 = cross(S, E1);
+    float c = dot(S2, D) / SE;
+    // out of triangle
+    if (c < 0 || b + c > 1) return res;
+
+    float t = dot(S2, E2) / SE;
     if (t < 0.0005f) return res;
 
-    vec3 P = S + d * t;
+    float a = 1 - b - c;
+    res.isHit = true;
+    res.distance = t;
+    res.hitPoint = O + t * D;
+    res.viewDir = D;
+    res.texCoords = a * triangle.texCoords[0] + b * triangle.texCoords[1] + c * triangle.texCoords[2];
+    res.TBN = a * triangle.TBN[0] + b * triangle.TBN[1] + c * triangle.TBN[2];
 
-    vec3 c1 = cross(p2 - p1, P - p1);
-    vec3 c2 = cross(p3 - p2, P - p2);
-    vec3 c3 = cross(p1 - p3, P - p3);
-    bool r1 = (dot(c1, N) > -0.01f && dot(c2, N) > -0.01f && dot(c3, N) > -0.01f);
-    bool r2 = (dot(c1, N) < 0.01f && dot(c2, N) < 0.01f && dot(c3, N) < 0.01f);
-
-    if (r1 || r2) {
-        res.isHit = true;
-        res.hitPoint = P;
-        res.distance = t;
-        res.normal = N;
-        res.viewDir = d;
-
-        vec3 lerp = calcLerp(p1, p2, p3, P);
-        res.texCoords = lerp.x * triangle.texCoords[0] + lerp.y * triangle.texCoords[1] + lerp.z * triangle.texCoords[2];
-        res.TBN = lerp.x * triangle.TBN[0] + lerp.y * triangle.TBN[1] + lerp.z * triangle.TBN[2];
-
-        if (triangle.normal.x >= 0) {
-            res.normal = texture2DArray(texturesArray, vec3(res.texCoords * triangle.normal.yz, triangle.normal.x)).rgb;
-            res.normal = normalize(res.normal * 2.0 - 1.0);
-            res.normal = res.TBN * res.normal;
-        }
-        else {
-            res.normal = lerp.x * triangle.n[0] + lerp.y * triangle.n[1] + lerp.z * triangle.n[2];
-        }
-        res.normal = normalize(res.normal);
-        res.normal = (res.isInside) ? (-res.normal) : (res.normal);
+    // count normal and TBN
+    if (triangle.normal.x >= 0) {
+        // normal Map
+        res.normal = texture2DArray(texturesArray, vec3(res.texCoords * triangle.normal.yz, triangle.normal.x)).rgb;
+        res.normal = res.normal * 2.0 - 1.0;
+        res.normal = res.TBN * res.normal;
     }
+    else {
+        res.normal = a * triangle.n[0] + b * triangle.n[1] + c * triangle.n[2];
+    }
+    if (dot(res.normal, D) > 0) res.normal = -res.normal;
+    res.normal = normalize(res.normal);
+
+    vec3 tangent = normalize(cross(triangle.p[0], res.normal));
+    vec3 bitangent = normalize(cross(res.normal, tangent));
+    res.TBN = mat3(tangent, bitangent, res.normal);
 
     return res;
 }
@@ -224,38 +238,96 @@ HitResult hitArray(Ray ray, int l, int r)
     res.isHit = false;
     for (int i = l; i <= r; i ++) {
         Triangle triangle = getTriangle(i);
-        HitResult r = hitTriangle(triangle, ray);
-        if (r.isHit && (!res.isHit || r.distance < res.distance)) {
-            res = r;
+        HitResult newhit = hitTriangle(triangle, ray);
+        if (newhit.isHit && (!res.isHit || newhit.distance < res.distance)) {
+            res = newhit;
             res.material = getMaterial(i, res.texCoords);
         }
     }
     return res;
 }
 
-// GPU random
-uint seed = uint(
-    uint((gl_FragCoord.x * 0.5 + 0.5) * screenWidth)  * uint(1973) + 
-    uint((gl_FragCoord.y * 0.5 + 0.5) * screenHeight) * uint(9277) + 
-    uint(counter) * uint(26699)) | uint(1);
-uint hash(inout uint seed)
+// if hit AABB
+float hitAABB(Ray r, vec3 AA, vec3 BB)
 {
-    seed = uint(seed ^ uint(61)) ^ uint(seed >> uint(16));
-    seed *= uint(9);
-    seed = seed ^ (seed >> 4);
-    seed *= uint(0x27d4eb2d);
-    seed = seed ^ (seed >> 15);
-    return seed;
+    vec3 invdir = 1.0 / r.direction;
+
+    vec3 f = (BB - r.startPoint) * invdir;
+    vec3 n = (AA - r.startPoint) * invdir;
+
+    vec3 tmax = max(f, n);
+    vec3 tmin = min(f, n);
+
+    float t1 = min(tmax.x, min(tmax.y, tmax.z));
+    float t0 = max(tmin.x, max(tmin.y, tmin.z));
+
+    return (t1 >= t0) ? ((t0 > 0.0) ? (t0) : (t1)) : (-1);
 }
-float rand()
+
+// search in BVH tree
+HitResult hitBVH(Ray ray)
 {
-    return float(hash(seed)) / 4294967296.0;
+    HitResult res;
+    res.isHit = false;
+
+    int stack[STACKSIZE];
+    int sp = 0;
+
+    stack[sp++] = 0;
+    while (sp > 0) {
+        int top = stack[--sp];
+        BVHNode node = getBVHNode(top);
+        
+        if (node.n > 0) {
+            HitResult r = hitArray(ray, node.index1, node.index2);
+            if (r.isHit && (!res.isHit || r.distance < res.distance)) res = r;
+            continue;
+        }
+        
+        float d1, d2;
+        if (node.left > 0) {
+            BVHNode leftNode = getBVHNode(node.left);
+            d1 = hitAABB(ray, leftNode.AA, leftNode.BB);
+        }
+        if (node.right > 0) {
+            BVHNode rightNode = getBVHNode(node.right);
+            d2 = hitAABB(ray, rightNode.AA, rightNode.BB);
+        }
+
+        if (d1 > 0 && d2 > 0) {
+            if (d1 < d2) {
+                stack[sp++] = node.right;
+                stack[sp++] = node.left;
+            }
+            else {
+                stack[sp++] = node.left;
+                stack[sp++] = node.right;
+            }
+        }
+        else if (d1 > 0) {
+            stack[sp++] = node.left;
+        }
+        else if (d2 > 0) {
+            stack[sp++] = node.right;
+        }
+    }
+
+    return res;
 }
-vec3 SampleHemisphere() {
-    float z = rand();
-    float r = max(0, sqrt(1.0 - z*z));
-    float phi = 2.0 * PI * rand();
-    return vec3(r * cos(phi), r * sin(phi), z);
+
+// sample hdr
+vec2 sampleSphericalMap(vec3 v) {
+    vec2 uv = vec2(atan(v.z, v.x), asin(v.y));
+    uv /= vec2(2.0 * PI, PI);
+    uv += 0.5;
+    uv.y = 1.0 - uv.y;
+    return uv;
+}
+vec3 sampleHdr(vec3 v) {
+    vec2 uv = sampleSphericalMap(normalize(v));
+    vec3 color = texture2D(hdrMap, uv).rgb;
+    //color = min(color, vec3(10));
+    return color;
 }
 
 // One ray tracing
@@ -264,13 +336,13 @@ vec3 tracing(HitResult hit, int maxBounce)
     vec3 Lo = vec3(0);
     vec3 nowL = vec3(1);
 
-    for (int bounce = 0; bounce < maxBounce; bounce++) {
-        vec3 wi = hit.TBN * SampleHemisphere();
+    for (int bounce = 0; bounce < maxBounce; bounce ++) {
+        vec3 wi = normalize(hit.TBN * SampleHemisphere());
 
         Ray randomRay;
         randomRay.startPoint = hit.hitPoint;
         randomRay.direction = wi;
-        HitResult newHit = hitArray(randomRay, 0, nTriangles-1);
+        HitResult newHit = hitBVH(randomRay);
 
         float pdf = 1.0 / (2.0 * PI);
         float cosine_o = max(0, dot(-hit.viewDir, hit.normal));
@@ -278,6 +350,8 @@ vec3 tracing(HitResult hit, int maxBounce)
         vec3 f_r = hit.material.diffuse / PI;
 
         if (!newHit.isHit) {
+            vec3 skyColor = sampleHdr(randomRay.direction);
+            Lo += nowL * skyColor * f_r * cosine_i / pdf;
             break;
         }
         
@@ -295,44 +369,29 @@ void main()
     vec3 color = vec3(0.0);
 
     for (int i = 0; i < SAMPLENUM; i ++) {
-        vec2 fragCoord = vec2(gl_FragCoord.x + rand() - 0.5, gl_FragCoord.y + rand() - 0.5);
-        vec4 ndc = vec4(
-            (fragCoord.x/screenWidth - 0.5) * 2.0,
-            (fragCoord.y/screenHeight - 0.5) * 2.0,
-            (gl_FragCoord.z - 0.5) * 2.0,
-            1.0
-        );
-        vec4 clip = inverse(view) * inverse(projection) * ndc; 
+        vec2 randxy = vec2((rand() - 0.5) / screenWidth, (rand() - 0.5) / screenHeight);
+        vec4 ndc = vec4(FragCoord.xy + randxy, FragCoord.z, 1.0);
+        vec4 clip = inverse_view * inverse_projection * ndc; 
         vec3 coord_pos = (clip / clip.w).xyz;
-
+        
         Ray ray;
         ray.startPoint = viewPos;
         vec3 dir = coord_pos - ray.startPoint;
         ray.direction = normalize(dir);
-        HitResult first = hitArray(ray, 0, nTriangles-1);
+        HitResult first = hitBVH(ray);
 
         if (first.isHit) {
             color += first.material.emissive + tracing(first, 2);
-            // color += vec4(dot(first.normal, -first.viewDir), 0, 0, 1.0);
         }
         else {
-            color += vec3(1.0);
+            color += sampleHdr(ray.direction);
         }
     }
 
-    vec2 lastFrameTexCoord = vec2(gl_FragCoord.x/screenWidth, gl_FragCoord.y/screenHeight);
-    FragColor = vec4(color / SAMPLENUM + texture2D(lastFrame, lastFrameTexCoord).rgb, 1.0);
-    // FragColor = vec4(calcLerp(vec3(-1, 0, 0), vec3(1, 0, 0), vec3(0, 1, 0), vec3(0.5, 0.5, 0)), 1.0);
-    
-
-    // Ray ray;
-    // ray.startPoint = viewPos;
-    // vec3 dir = coord_pos - ray.startPoint;
-    // ray.direction = normalize(dir);
-    // HitResult res = hitArray(ray, 0, nTriangles-1);
-
-    // if (res.isHit)
-    // // FragColor = vec4(gl_FragCoord.z / 4, 0.0, 0.0, 1.0);
-    // FragColor = vec4(dot(res.normal, -res.viewDir), 0, 0, 1.0);
-    // else FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+    color /= SAMPLENUM;
+    vec3 lastColor = texture(lastFrame, (FragCoord.xy + 1) / 2).rgb;
+    if (!isRealTime) {
+        color = length(color) > 0.0 ? mix(lastColor, color, 1/log(9+frameCounter)) : lastColor;
+    }
+    FragColor = vec4(color, 1.0);
 }
