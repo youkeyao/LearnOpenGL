@@ -27,16 +27,17 @@ uniform vec3 viewPos;
 #define PI 3.14159265359
 
 struct Material {
-    vec3 ambient;       // (id, width, height)
+    vec3 ambient;       // texture: (-id-1, width, height) color: (r, g, b)
     vec3 diffuse;
     vec3 specular;
     vec3 emissive;
-    vec3 shininess;
-    vec3 metallic;
-    vec3 refracti;
-    vec3 opacity;
+    float shininess;
+    float roughness;
+    float metallic;
+    float refracti;
+    float opacity;
     vec3 transmission;
-    vec3 anisotropy;
+    float anisotropy;
 };
 
 struct Triangle {
@@ -44,8 +45,8 @@ struct Triangle {
     vec3 n[3];
     vec2 texCoords[3];
     mat3 TBN[3];
-    vec3 normal;        // (id, width, height)
-    vec3 height;        // (id, width, height)
+    vec3 normal;        // texture: (-id-1, width, height) none: (-1, -1, -1)
+    vec3 height;        // texture: (-id-1, width, height) none: (-1, -1, -1)
 };
 
 struct BVHNode {
@@ -91,11 +92,32 @@ float rand()
 {
     return float(hash(seed)) / 4294967296.0;
 }
+float sqr(float x) { 
+    return x*x; 
+}
 vec3 SampleHemisphere() {
     float z = rand();
     float r = max(0, sqrt(1.0 - z*z));
     float phi = 2.0 * PI * rand();
     return vec3(r * cos(phi), r * sin(phi), z);
+}
+vec3 SampleGTR2(vec3 V, float alpha, mat3 TBN)
+{
+    float xi_1 = rand();
+    float xi_2 = rand();
+    float phi_h = 2.0 * PI * xi_1;
+    float sin_phi_h = sin(phi_h);
+    float cos_phi_h = cos(phi_h);
+
+    float cos_theta_h = sqrt((1.0-xi_2)/(1.0+(alpha*alpha-1.0)*xi_2));
+    float sin_theta_h = sqrt(max(0.0, 1.0 - cos_theta_h * cos_theta_h));
+
+    vec3 H = vec3(sin_theta_h*cos_phi_h, sin_theta_h*sin_phi_h, cos_theta_h);
+    H = TBN * H;
+
+    vec3 L = reflect(-V, H);
+
+    return L;
 }
 
 Triangle getTriangle(int i)
@@ -125,32 +147,34 @@ Triangle getTriangle(int i)
     return t;
 }
 
+vec3 getColor(int pos, vec2 texCoords)
+{
+    vec3 t = texelFetch(triangles, pos).xyz;
+    if (t.x < 0) {
+        return texture2DArray(texturesArray, vec3(texCoords * t.yz, - t.x - 1)).rgb;
+    }
+    else {
+        return t;
+    }
+}
+
 Material getMaterial(int i, vec2 texCoords)
 {
     int offset = i * 29;
     Material m;
     vec3 tmp;
 
-    tmp = texelFetch(triangles, offset + 19).xyz;
-    m.ambient = texture2DArray(texturesArray, vec3(texCoords * tmp.yz, tmp.x)).rgb;
-    tmp = texelFetch(triangles, offset + 20).xyz;
-    m.diffuse = texture2DArray(texturesArray, vec3(texCoords * tmp.yz, tmp.x)).rgb;
-    tmp = texelFetch(triangles, offset + 21).xyz;
-    m.specular = texture2DArray(texturesArray, vec3(texCoords * tmp.yz, tmp.x)).rgb;
-    tmp = texelFetch(triangles, offset + 22).xyz;
-    m.emissive = texture2DArray(texturesArray, vec3(texCoords * tmp.yz, tmp.x)).rgb;
-    tmp = texelFetch(triangles, offset + 23).xyz;
-    m.shininess = texture2DArray(texturesArray, vec3(texCoords * tmp.yz, tmp.x)).rgb;
-    tmp = texelFetch(triangles, offset + 24).xyz;
-    m.metallic = texture2DArray(texturesArray, vec3(texCoords * tmp.yz, tmp.x)).rgb;
-    tmp = texelFetch(triangles, offset + 25).xyz;
-    m.refracti = texture2DArray(texturesArray, vec3(texCoords * tmp.yz, tmp.x)).rgb;
-    tmp = texelFetch(triangles, offset + 26).xyz;
-    m.opacity = texture2DArray(texturesArray, vec3(texCoords * tmp.yz, tmp.x)).rgb;
-    tmp = texelFetch(triangles, offset + 27).xyz;
-    m.transmission = texture2DArray(texturesArray, vec3(texCoords * tmp.yz, tmp.x)).rgb;
-    tmp = texelFetch(triangles, offset + 28).xyz;
-    m.anisotropy = texture2DArray(texturesArray, vec3(texCoords * tmp.yz, tmp.x)).rgb;
+    m.ambient = getColor(offset + 19, texCoords);
+    m.diffuse = getColor(offset + 20, texCoords);
+    m.specular = getColor(offset + 21, texCoords);
+    m.emissive = getColor(offset + 22, texCoords);
+    m.shininess = getColor(offset + 23, texCoords).x;
+    m.roughness = 1 - m.shininess / 1000;
+    m.metallic = getColor(offset + 24, texCoords).x;
+    m.refracti = getColor(offset + 25, texCoords).x;
+    m.opacity = getColor(offset + 26, texCoords).x;
+    m.transmission = getColor(offset + 27, texCoords);
+    m.anisotropy = getColor(offset + 28, texCoords).x;
 
     return m;
 }
@@ -187,7 +211,7 @@ HitResult hitTriangle(Triangle triangle, Ray ray)
 
     float SE = dot(S1, E1);
     // parallel
-    if (abs(SE) < 0.01f) return res;
+    if (abs(SE) < 0.000001f) return res;
 
     float invdet = 1 / SE;
     vec3 S = O - triangle.p[0];
@@ -213,19 +237,20 @@ HitResult hitTriangle(Triangle triangle, Ray ray)
     res.TBN = a * triangle.TBN[0] + b * triangle.TBN[1] + c * triangle.TBN[2];
 
     // count normal and TBN
-    if (triangle.normal.x >= 0) {
+    if (triangle.normal.y < 0 && triangle.normal.z < 0) {
+        res.normal = a * triangle.n[0] + b * triangle.n[1] + c * triangle.n[2];
+    }
+    else {
         // normal Map
         res.normal = texture2DArray(texturesArray, vec3(res.texCoords * triangle.normal.yz, triangle.normal.x)).rgb;
         res.normal = res.normal * 2.0 - 1.0;
         res.normal = res.TBN * res.normal;
     }
-    else {
-        res.normal = a * triangle.n[0] + b * triangle.n[1] + c * triangle.n[2];
-    }
+    
     if (dot(res.normal, D) > 0) res.normal = -res.normal;
     res.normal = normalize(res.normal);
 
-    vec3 tangent = normalize(cross(triangle.p[0], res.normal));
+    vec3 tangent = normalize(cross(res.TBN * vec3(0, 1, 0), res.normal));
     vec3 bitangent = normalize(cross(res.normal, tangent));
     res.TBN = mat3(tangent, bitangent, res.normal);
 
@@ -247,7 +272,7 @@ HitResult hitArray(Ray ray, int l, int r)
     return res;
 }
 
-// if hit AABB
+// if hit AABB, return distance
 float hitAABB(Ray r, vec3 AA, vec3 BB)
 {
     vec3 invdir = 1.0 / r.direction;
@@ -330,37 +355,141 @@ vec3 sampleHdr(vec3 v) {
     return color;
 }
 
+// count BRDF
+float SchlickFresnel(float u) {
+    float m = clamp(1-u, 0, 1);
+    float m2 = m*m;
+    return m2 * m2 * m;
+}
+float GTR2_aniso(float NdotH, float HdotX, float HdotY, float ax, float ay) {
+    return 1 / (PI * ax*ay * sqr( sqr(HdotX/ax) + sqr(HdotY/ay) + NdotH*NdotH ));
+}
+float smithG_GGX_aniso(float NdotV, float VdotX, float VdotY, float ax, float ay) {
+    return 1 / (NdotV + sqrt( sqr(VdotX*ax) + sqr(VdotY*ay) + sqr(NdotV) ));
+}
+vec3 BRDF(vec3 V, vec3 N, vec3 L, mat3 TBN, Material mat)
+{
+    float NdotL = dot(N, L);
+    float NdotV = dot(N, V);
+    if(NdotL < 0 || NdotV < 0) return vec3(0);
+
+    vec3 H = normalize(V + L);
+    float NdotH = dot(N, H);
+    float LdotH = dot(L, H);
+    vec3 X = TBN * vec3(1, 0, 0);
+    vec3 Y = TBN * vec3(0, 1, 0);
+
+    // diffuse
+    float Fd90 = 0.5 + 2.0 * LdotH * LdotH * mat.roughness;
+	float FL = SchlickFresnel(NdotL);
+	float FV = SchlickFresnel(NdotV);
+	float Fd = mix(1.0, Fd90, FL) * mix(1.0, Fd90, FV);
+	vec3 diffuse = Fd * mat.diffuse / PI;
+
+    // specular
+    float aspect = sqrt(1.0 - mat.anisotropy * 0.9);
+    float ax = max(0.001, sqr(mat.roughness)/aspect);
+    float ay = max(0.001, sqr(mat.roughness)*aspect);
+    float F0 = (mat.refracti - 1) * (mat.refracti - 1) / (mat.refracti + 1) / (mat.refracti + 1);
+    vec3 spec = mix(F0 * mat.specular, mat.diffuse, mat.metallic);
+
+    float Ds = GTR2_aniso(NdotH, dot(H, X), dot(H, Y), ax, ay);
+    float Gs = smithG_GGX_aniso(NdotV, dot(V, X), dot(V, Y), ax, ay);
+    Gs *= smithG_GGX_aniso(NdotL, dot(L, X), dot(L, Y), ax, ay);
+    vec3 Fs = mix(spec, vec3(1), SchlickFresnel(LdotH));
+    vec3 specular = Ds * Gs * Fs;
+
+	return (1.0 - mat.metallic) * diffuse + specular;
+}
+float BRDF_Pdf(vec3 V, vec3 N, vec3 L, mat3 TBN, Material material) {
+    float NdotL = dot(N, L);
+    float NdotV = dot(N, V);
+    if (NdotL < 0 || NdotV < 0) return 0;
+
+    vec3 H = normalize(L + V);
+    float NdotH = dot(N, H);
+    float LdotH = dot(L, H);
+    vec3 X = TBN * vec3(1, 0, 0);
+    vec3 Y = TBN * vec3(0, 1, 0);
+     
+    float aspect = sqrt(1.0 - material.anisotropy * 0.9);
+    float ax = max(0.001, sqr(material.roughness)/aspect);
+    float ay = max(0.001, sqr(material.roughness)*aspect);
+    float Ds = GTR2_aniso(NdotH, dot(H, X), dot(H, Y), ax, ay);
+
+    float pdf_diffuse = NdotL / PI;
+    float pdf_specular = Ds * NdotH / (4.0 * dot(L, H));
+
+    float r_diffuse = (1.0 - material.metallic);
+    float r_specular = 1.0;
+    float r_sum = r_diffuse + r_specular;
+
+    float p_diffuse = r_diffuse / r_sum;
+    float p_specular = r_specular / r_sum;
+
+    float pdf = p_diffuse * pdf_diffuse + p_specular * pdf_specular;
+
+    pdf = max(1e-10, pdf);
+    return pdf;
+}
+vec3 SampleL(vec3 V, vec3 N, mat3 TBN, Material material)
+{
+    float alpha = max(0.001, sqr(material.roughness));
+    
+    float r_diffuse = (1.0 - material.metallic);
+    float r_specular = 1.0;
+    float r_sum = r_diffuse + r_specular;
+
+    float p_diffuse = r_diffuse / r_sum;
+    float p_specular = r_specular / r_sum;
+
+    float p = rand();
+
+    if(p <= p_diffuse) {
+        return TBN * SampleHemisphere();
+    } 
+    else if(p <= p_diffuse + p_specular) {    
+        return SampleGTR2(V, alpha, TBN);
+    }
+    return vec3(0, 1, 0);
+}
+
 // One ray tracing
 vec3 tracing(HitResult hit, int maxBounce)
 {
     vec3 Lo = vec3(0);
     vec3 nowL = vec3(1);
 
-    for (int bounce = 0; bounce < maxBounce; bounce ++) {
-        vec3 wi = normalize(hit.TBN * SampleHemisphere());
+    for(int bounce=0; bounce<maxBounce; bounce++) {
+        vec3 V = -hit.viewDir;
+        vec3 N = hit.normal;
+
+        vec3 L = SampleL(V, N, hit.TBN, hit.material); 
+        float NdotL = dot(N, L);
+        if (NdotL <= 0.0) break;
 
         Ray randomRay;
         randomRay.startPoint = hit.hitPoint;
-        randomRay.direction = wi;
+        randomRay.direction = L;
         HitResult newHit = hitBVH(randomRay);
 
-        float pdf = 1.0 / (2.0 * PI);
-        float cosine_o = max(0, dot(-hit.viewDir, hit.normal));
-        float cosine_i = max(0, dot(randomRay.direction, hit.normal));
-        vec3 f_r = hit.material.diffuse / PI;
+        vec3 f_r = BRDF(V, N, L, hit.TBN, hit.material);
+        float pdf = BRDF_Pdf(V, N, L, hit.TBN, hit.material);
+        if (pdf <= 0.0) break;
 
-        if (!newHit.isHit) {
+        if(!newHit.isHit) {
             vec3 skyColor = sampleHdr(randomRay.direction);
-            Lo += nowL * skyColor * f_r * cosine_i / pdf;
+            Lo += nowL * skyColor * f_r * NdotL / pdf;
             break;
         }
         
         vec3 Le = newHit.material.emissive;
-        Lo += nowL * Le * f_r * cosine_i / pdf;
-        
+        Lo += nowL * Le * f_r * NdotL / pdf;             
+
         hit = newHit;
-        nowL *= f_r * cosine_i / pdf;
+        nowL *= f_r * NdotL / pdf;
     }
+    
     return Lo;
 }
 

@@ -27,16 +27,16 @@ struct Texture {
 };
 
 struct Material {
-    glm::vec3 ambient;          // (id, width, height)
-    glm::vec3 diffuse;          // (id, width, height)
-    glm::vec3 specular;         // (id, width, height)
-    glm::vec3 emissive;         // (id, width, height)
-    glm::vec3 shininess;        // (id, width, height)
-    glm::vec3 metallic;         // (id, width, height)
-    glm::vec3 refracti;         // (id, width, height)
-    glm::vec3 opacity;          // (id, width, height)
-    glm::vec3 transmission;     // (id, width, height)
-    glm::vec3 anisotropy;       // (id, width, height)
+    glm::vec3 ambient;          // texture: (-id-1, width, height) color: (r, g, b)
+    glm::vec3 diffuse;
+    glm::vec3 specular;
+    glm::vec3 emissive;
+    glm::vec3 shininess;        // texture: (-id-1, width, height) color: (shininess, 0, 0)
+    glm::vec3 metallic;
+    glm::vec3 refracti;
+    glm::vec3 opacity;
+    glm::vec3 transmission;
+    glm::vec3 anisotropy;
 };
 
 struct Triangle {
@@ -44,8 +44,8 @@ struct Triangle {
     glm::vec3 n[3];
     glm::vec2 texCoords[3];
     glm::mat3 TBN[3];
-    glm::vec3 normal;           // (id, width, height)
-    glm::vec3 height;           // (id, width, height)
+    glm::vec3 normal;           // texture: (-id-1, width, height) none: (-1, -1, -1)
+    glm::vec3 height;           // texture: (-id-1, width, height) none: (-1, -1, -1)
     Material material;
 };
 
@@ -133,32 +133,6 @@ public:
 
     void loadShader(Shader &shader)
     {
-        // int width, height, nrComponents;
-        // unsigned char *data = stbi_load("resources/textures/bricks2.jpg", &width, &height, &nrComponents, 0);
-        // unsigned int hdrTexture;
-        // if (data)
-        // {
-        //     glGenTextures(1, &hdrTexture);
-        //     glActiveTexture(GL_TEXTURE0 + hdrTexture);
-        //     glBindTexture(GL_TEXTURE_2D, hdrTexture);
-        //     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
-
-        //     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        //     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        //     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        //     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        //     glGenerateMipmap(GL_TEXTURE_2D);
-
-        //     glActiveTexture(0);
-
-        //     stbi_image_free(data);
-        // }
-        // else {
-        //     exit(1);
-        // }
-        // // stbi_image_free(data);
-        // shader.setInt("test", hdrTexture);
-
         shader.setInt("texturesArray", texture_array);
         shader.setInt("triangles", trianglesTextureBuffer);
         shader.setInt("nTriangles", triangles.size());
@@ -169,18 +143,9 @@ public:
     // draws the scene
     void draw()
     {
-        // glActiveTexture(GL_TEXTURE0 + texture_array);
-        // glBindTexture(GL_TEXTURE_2D_ARRAY, texture_array);
-        // glActiveTexture(GL_TEXTURE0 + trianglesTextureBuffer);
-        // glBindTexture(GL_TEXTURE_BUFFER, trianglesTextureBuffer);
-        // glActiveTexture(GL_TEXTURE0 + bvhTextureBuffer);
-        // glBindTexture(GL_TEXTURE_2D_ARRAY, bvhTextureBuffer);
-
         glBindVertexArray(VAO);
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
-
-        // glActiveTexture(0);
     }
     
 private:
@@ -318,6 +283,14 @@ private:
         }
     }
 
+    glm::mat3 calcTBN(glm::vec3 tangent, glm::vec3 bitangent, glm::vec3 normal)
+    {
+        glm::vec3 T = glm::normalize(glm::transpose(glm::inverse(glm::mat3(this->model))) * tangent);
+        glm::vec3 B = glm::normalize(glm::transpose(glm::inverse(glm::mat3(this->model))) * bitangent);
+        glm::vec3 N = glm::normalize(normal);
+        return glm::mat3(T, B, N);
+    }
+
     // load material from file or rgb into texture
     glm::vec3 loadMaterialTextures(aiMaterial *material, aiTextureType type, const char *pKey = nullptr, unsigned int key_type = 0, unsigned int idx = 0)
     {
@@ -339,51 +312,12 @@ private:
         else if (pKey != nullptr) {
             aiColor3D color;
             material->Get(pKey, key_type, idx, color);
-            Texture t;
-            t.name = color2string(color);
-            t.id = TextureFromRGB(color.r, color.g, color.b);
-            textures_loaded.push_back(t);
-            return t.id;
+            // std::cout << pKey << color.r << color.g << color.b << std::endl;
+            return glm::vec3(color.r, color.g, color.b);
         }
         else {
-            return glm::vec3(-1, 0, 0);
+            return glm::vec3(-1);
         }
-    }
-
-    void setupScene()
-    {
-        glGenVertexArrays(1, &VAO);
-        glGenBuffers(1, &VBO);
-        glGenBuffers(1, &EBO);
-
-        glBindVertexArray(VAO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), &vertices[0], GL_STATIC_DRAW);  
-
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
-
-        glEnableVertexAttribArray(0);	
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-
-        glBindVertexArray(0);
-    }
-
-    glm::mat3 calcTBN(glm::vec3 tangent, glm::vec3 bitangent, glm::vec3 normal)
-    {
-        glm::vec3 T = glm::normalize(glm::transpose(glm::inverse(glm::mat3(this->model))) * tangent);
-        glm::vec3 B = glm::normalize(glm::transpose(glm::inverse(glm::mat3(this->model))) * bitangent);
-        glm::vec3 N = glm::normalize(normal);
-        return glm::mat3(T, B, N);
-    }
-
-    // generate 1x1 texture from rgb
-    glm::vec3 TextureFromRGB(float r, float g, float b)
-    {
-        unsigned char data[] = { (unsigned char)(r * 255), (unsigned char)(g * 255), (unsigned char)(b * 255) };
-        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, textures_loaded.size(), 1, 1, 1, GL_RGB, GL_UNSIGNED_BYTE, data);
-        return glm::vec3(textures_loaded.size(), 1 / (float)MAXWIDTH, 1 / (float)MAXHEIGHT);
     }
 
     // load texture from file
@@ -405,7 +339,7 @@ private:
 
             glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, textures_loaded.size(), width, height, 1, format, GL_UNSIGNED_BYTE, data);
             stbi_image_free(data);
-            return glm::vec3(textures_loaded.size(), (float)width / MAXWIDTH, (float)height / MAXHEIGHT);
+            return glm::vec3(-1.0-textures_loaded.size(), (float)width / MAXWIDTH, (float)height / MAXHEIGHT);
         }
         else {
             std::cout << "Texture failed to load at path: " << path << std::endl;
@@ -414,14 +348,24 @@ private:
         }
     }
 
-    // change aiColor3D type to string
-    string color2string(aiColor3D color)
+    void setupScene()
     {
-        string s;
-        char buf[30];
-        sprintf(buf, "%.4f %.4f %.4f", color.r, color.g, color.b);
-        s.assign(buf);
-        return s;
+        glGenVertexArrays(1, &VAO);
+        glGenBuffers(1, &VBO);
+        glGenBuffers(1, &EBO);
+
+        glBindVertexArray(VAO);
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), &vertices[0], GL_STATIC_DRAW);  
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
+
+        glEnableVertexAttribArray(0);	
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+
+        glBindVertexArray(0);
     }
 
     // BVH with SAH

@@ -13,8 +13,8 @@ vec3 toneMapping(in vec3 c, float limit) {
 void main()
 {
     vec3 color = texture(frame, (FragCoord.xy + 1) / 2).rgb;
-    // color = toneMapping(color, 1.5);
-    // color = pow(color, vec3(1.0 / 2.2));
+    color = toneMapping(color, 1.5);
+    color = pow(color, vec3(1.0 / 2.2));
 
     FragColor = vec4(color, 1.0);
 }

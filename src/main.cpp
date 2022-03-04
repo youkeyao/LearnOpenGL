@@ -1,4 +1,4 @@
-#include <glad/glad.h>
+﻿#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
 #include <glm/glm.hpp>
@@ -18,13 +18,15 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 void processInput(GLFWwindow *window);
 
 // settings
-const unsigned int SCR_WIDTH = 800;
+const unsigned int SCR_WIDTH = 600;
 const unsigned int SCR_HEIGHT = 600;
 bool isRealTime = true;
+bool isRealTimeRelease = true;
 bool isFocus = true;
+bool isFocusRelease = true;
 
 // camera
-Camera camera(glm::vec3(0.0f, 0.0f, 12.0f));
+Camera camera(glm::vec3(-2.0f, -4.0f, 5.0f));
 float lastX = SCR_WIDTH / 2.0f;
 float lastY = SCR_HEIGHT / 2.0f;
 bool firstMouse = true;
@@ -86,7 +88,8 @@ int main()
     // load scene
     // -----------
     // Scene scene("E:/assets/Bathroom/03.obj", aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | aiProcess_FlipUVs | aiProcess_OptimizeMeshes);
-    Scene scene("./resources/objects/testScene/testScene.obj", aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | aiProcess_FlipUVs, glm::rotate(glm::mat4(1.0), glm::radians(0.0f), glm::vec3(0.0, 1.0, 0.0)));
+    // Scene scene("./resources/objects/bathroom/bathroom.obj", aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | aiProcess_FlipUVs, glm::scale(glm::mat4(1.0), glm::vec3(4.0, 4.0, 4.0)));
+    Scene scene("./resources/objects/testScene/testScene.obj", aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | aiProcess_FlipUVs);
     scene.loadShader(shaderPathTracingPass);
     cout << "scene loaded" << endl;
 
@@ -169,7 +172,7 @@ int main()
         shaderPathTracingPass.setVec3("viewPos", camera.Position);
         shaderPathTracingPass.setInt("lastFrame", mixPass.attachments[0]);
         shaderPathTracingPass.setInt("fragPos", geometryPass.attachments[0]);
-        // shaderPathTracingPass.setInt("hdrMap", hdrTexture);
+        shaderPathTracingPass.setInt("hdrMap", hdrTexture);
         shaderPathTracingPass.setInt("frameCounter", frameCounter);
         shaderPathTracingPass.setBool("isRealTime", isRealTime);
         pathTracingPass.draw();
@@ -211,17 +214,22 @@ void processInput(GLFWwindow *window)
         glfwSetWindowShouldClose(window, true);
 
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-        isFocus = !isFocus;
-        if (isFocus) {
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-            glfwSetCursorPosCallback(window, mouse_callback);
+        if (isFocusRelease) {
+            isFocusRelease = false;
+            isFocus = !isFocus;
+            if (isFocus) {
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                glfwSetCursorPosCallback(window, mouse_callback);
+            }
+            else {
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+                glfwSetCursorPosCallback(window, NULL);
+            }
+            cout << "isFocus: " << isFocus << endl;
         }
-        else {
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-            glfwSetCursorPosCallback(window, NULL);
-        }
-        cout << "isFocus: " << isFocus << endl;
     }
+    else isFocusRelease = true;
+
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         camera.ProcessKeyboard(FORWARD, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
@@ -231,9 +239,13 @@ void processInput(GLFWwindow *window)
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         camera.ProcessKeyboard(RIGHT, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
-        isRealTime = !isRealTime;
-        cout << "isRealTime: " << isRealTime << endl;
+        if (isRealTimeRelease) {
+            isRealTimeRelease = false;
+            isRealTime = !isRealTime;
+            cout << "isRealTime: " << isRealTime << endl;
+        }
     }
+    else isRealTimeRelease = true;
 }
 
 // glfw: whenever the window size changed (by OS or user resize) this callback function executes
