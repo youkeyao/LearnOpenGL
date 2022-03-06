@@ -18,7 +18,6 @@ uniform samplerBuffer bvhNodes;
 uniform int nNodes;
 
 uniform sampler2D lastFrame;
-uniform sampler2D fragPos;
 uniform sampler2D hdrMap;
 uniform vec3 viewPos;
 
@@ -265,8 +264,11 @@ HitResult hitArray(Ray ray, int l, int r)
         Triangle triangle = getTriangle(i);
         HitResult newhit = hitTriangle(triangle, ray);
         if (newhit.isHit && (!res.isHit || newhit.distance < res.distance)) {
-            res = newhit;
-            res.material = getMaterial(i, res.texCoords);
+            Material mat = getMaterial(i, newhit.texCoords);
+            if (rand() < mat.opacity) {
+                res = newhit;
+                res.material = mat;
+            }            
         }
     }
     return res;
@@ -464,12 +466,14 @@ vec3 tracing(HitResult hit, int maxBounce)
         vec3 V = -hit.viewDir;
         vec3 N = hit.normal;
 
+        Ray randomRay;
+        randomRay.startPoint = hit.hitPoint;
+
+        // BRDF with importance sampling
         vec3 L = SampleL(V, N, hit.TBN, hit.material); 
         float NdotL = dot(N, L);
         if (NdotL <= 0.0) break;
-
-        Ray randomRay;
-        randomRay.startPoint = hit.hitPoint;
+        
         randomRay.direction = L;
         HitResult newHit = hitBVH(randomRay);
 
@@ -520,7 +524,7 @@ void main()
     color /= SAMPLENUM;
     vec3 lastColor = texture(lastFrame, (FragCoord.xy + 1) / 2).rgb;
     if (!isRealTime) {
-        color = length(color) > 0.0 ? mix(lastColor, color, 1/log(9+frameCounter)) : lastColor;
+        color = length(color) >= 0.0 ? mix(lastColor, color, 1.0/frameCounter) : lastColor;
     }
     FragColor = vec4(color, 1.0);
 }

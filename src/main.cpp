@@ -26,7 +26,7 @@ bool isFocus = true;
 bool isFocusRelease = true;
 
 // camera
-Camera camera(glm::vec3(-2.0f, -4.0f, 5.0f));
+Camera camera(glm::vec3(0.0f, -4.0f, 15.0f));
 float lastX = SCR_WIDTH / 2.0f;
 float lastY = SCR_HEIGHT / 2.0f;
 bool firstMouse = true;
@@ -34,6 +34,7 @@ bool firstMouse = true;
 // timing
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
+int frameCounter = 0;
 
 int main()
 {
@@ -87,8 +88,6 @@ int main()
 
     // load scene
     // -----------
-    // Scene scene("E:/assets/Bathroom/03.obj", aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | aiProcess_FlipUVs | aiProcess_OptimizeMeshes);
-    // Scene scene("./resources/objects/bathroom/bathroom.obj", aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | aiProcess_FlipUVs, glm::scale(glm::mat4(1.0), glm::vec3(4.0, 4.0, 4.0)));
     Scene scene("./resources/objects/testScene/testScene.obj", aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | aiProcess_FlipUVs);
     scene.loadShader(shaderPathTracingPass);
     cout << "scene loaded" << endl;
@@ -130,8 +129,6 @@ int main()
     mixPass.bindData(GL_COLOR_ATTACHMENT0, SCR_WIDTH, SCR_HEIGHT);
     RenderPass postProcessPass(true);
 
-    unsigned int frameCounter = 0;
-
     // render loop
     // -----------
     while (!glfwWindowShouldClose(window))
@@ -164,14 +161,12 @@ int main()
 
         // 2. PathTracing Pass: calculate lighting by iterating over a screen filled quad pixel-by-pixel using the gbuffer's content.
         // ---------------------------------
-        pathTracingPass.activeFramebuffer(geometryPass.attachments);
         pathTracingPass.activeFramebuffer(mixPass.attachments);
         shaderPathTracingPass.use();
         shaderPathTracingPass.setMat4("projection", projection);
         shaderPathTracingPass.setMat4("view", view);
         shaderPathTracingPass.setVec3("viewPos", camera.Position);
         shaderPathTracingPass.setInt("lastFrame", mixPass.attachments[0]);
-        shaderPathTracingPass.setInt("fragPos", geometryPass.attachments[0]);
         shaderPathTracingPass.setInt("hdrMap", hdrTexture);
         shaderPathTracingPass.setInt("frameCounter", frameCounter);
         shaderPathTracingPass.setBool("isRealTime", isRealTime);
@@ -180,9 +175,11 @@ int main()
 
         // 3. Mix Pass: mix with last frame
         // ---------------------------------
+        mixPass.activeFramebuffer(geometryPass.attachments);
         mixPass.activeFramebuffer(pathTracingPass.attachments);
         shaderMixPass.use();
         shaderMixPass.setInt("nowFrame", pathTracingPass.attachments[0]);
+        shaderMixPass.setInt("fragPos", geometryPass.attachments[0]);
         mixPass.draw();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -242,6 +239,7 @@ void processInput(GLFWwindow *window)
         if (isRealTimeRelease) {
             isRealTimeRelease = false;
             isRealTime = !isRealTime;
+            frameCounter = 1;
             cout << "isRealTime: " << isRealTime << endl;
         }
     }

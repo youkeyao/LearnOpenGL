@@ -225,7 +225,7 @@ private:
         mat.metallic = loadMaterialTextures(material, aiTextureType_METALNESS, AI_MATKEY_METALLIC_FACTOR);
         mat.refracti = loadMaterialTextures(material, aiTextureType_REFLECTION, AI_MATKEY_REFRACTI);
         mat.opacity = loadMaterialTextures(material, aiTextureType_OPACITY, AI_MATKEY_OPACITY);
-        mat.transmission = loadMaterialTextures(material, aiTextureType_TRANSMISSION, AI_MATKEY_TRANSMISSION_FACTOR);
+        mat.transmission = loadMaterialTextures(material, aiTextureType_TRANSMISSION, AI_MATKEY_COLOR_TRANSPARENT);
         mat.anisotropy = loadMaterialTextures(material, aiTextureType_UNKNOWN, AI_MATKEY_ANISOTROPY_FACTOR);
 
         glm::vec3 norm = loadMaterialTextures(material, aiTextureType_NORMALS);
