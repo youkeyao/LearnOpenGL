@@ -36,6 +36,10 @@ float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 int frameCounter = 0;
 
+// dir
+std::string shadersDir = "../src/shaders/";
+std::string resourcesDir = "../resources/";
+
 int main()
 {
     // glfw: initialize and configure
@@ -78,17 +82,17 @@ int main()
 
     // build and compile shaders
     // -------------------------
-    Shader shaderGeometryPass("src/shaders/gBuffer.vs", "src/shaders/gBuffer.fs");
-    Shader shaderPathTracingPass("src/shaders/common.vs", "src/shaders/pathtracing.fs");
-    Shader shaderMixPass("src/shaders/common.vs", "src/shaders/mix.fs");
-    Shader shaderPostProcessPass("src/shaders/common.vs", "src/shaders/postprocess.fs");
+    Shader shaderGeometryPass((shadersDir + "gBuffer.vs").c_str(), (shadersDir + "gBuffer.fs").c_str());
+    Shader shaderPathTracingPass((shadersDir + "common.vs").c_str(), (shadersDir + "pathtracing.fs").c_str());
+    Shader shaderMixPass((shadersDir + "common.vs").c_str(), (shadersDir + "mix.fs").c_str());
+    Shader shaderPostProcessPass((shadersDir + "common.vs").c_str(), (shadersDir + "postprocess.fs").c_str());
     shaderPathTracingPass.use();
     shaderPathTracingPass.setFloat("screenWidth", SCR_WIDTH);
     shaderPathTracingPass.setFloat("screenHeight", SCR_HEIGHT);
 
     // load scene
     // -----------
-    Scene scene("./resources/objects/testScene/testScene.obj", aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | aiProcess_FlipUVs);
+    Scene scene(resourcesDir + "objects/testScene/testScene.obj", aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | aiProcess_FlipUVs);
     scene.loadShader(shaderPathTracingPass);
     cout << "scene loaded" << endl;
 
@@ -96,7 +100,7 @@ int main()
     // ---------------------------------
     stbi_set_flip_vertically_on_load(false);
     int width, height, nrComponents;
-    float *data = stbi_loadf("resources/textures/hdr/newport_loft.hdr", &width, &height, &nrComponents, 0);
+    float *data = stbi_loadf((resourcesDir + "textures/hdr/newport_loft.hdr").c_str(), &width, &height, &nrComponents, 0);
     unsigned int hdrTexture;
     if (data) {
         glGenTextures(1, &hdrTexture);

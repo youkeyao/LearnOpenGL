@@ -9,6 +9,7 @@
 - [x] In_Practice
 
 Now this is a GPU-based path tracer.
+![testScene](resources/objects/testScene/testScene.png)
 
 ## Features
 - load textures
@@ -16,7 +17,7 @@ Now this is a GPU-based path tracer.
 - BRDF
 - importance sampling
 
-## Material(.obj)
+## Material(.mtl)
 - Kd(diffuse, base color)
 - Ks(specular)
 - Ke(emissive)
@@ -24,3 +25,12 @@ Now this is a GPU-based path tracer.
 - Pm(metallic)
 - Ni(refracti)
 - d(opacity)
+
+## Run
+```
+mkdir build && cd build
+cmake ..
+make
+cd ../bin
+./main
+```
