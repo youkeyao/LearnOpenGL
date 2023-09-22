@@ -22,10 +22,20 @@ add_subdirectory( vendor/stb_image )
 
 include_directories(
     PUBLIC
+        src/
         vendor/glfw/include
         vendor/glad/include
         vendor/assimp/include
         vendor/stb_image
 )
 
-add_subdirectory( src )
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
+add_executable( main ${SOURCES} )
+target_link_libraries( main
+    PRIVATE
+        glfw
+        glad
+        assimp
+        glm::glm
+        stb_image
+)

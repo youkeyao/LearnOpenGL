@@ -19,19 +19,18 @@
 #include <iostream>
 #include <map>
 #include <vector>
-using namespace std;
 
 struct Texture {
     glm::vec3 id;
-    string name;
+    std::string name;
 };
 
 struct Material {
-    glm::vec3 ambient;          // texture: (-id-1, width, height) color: (r, g, b)
+    glm::vec3 ambient;          // texture: (-id-2, width, height) color: (r, g, b)
     glm::vec3 diffuse;
     glm::vec3 specular;
     glm::vec3 emissive;
-    glm::vec3 shininess;        // texture: (-id-1, width, height) color: (shininess, 0, 0)
+    glm::vec3 shininess;        // texture: (-id-2, width, height) color: (shininess, 0, 0)
     glm::vec3 metallic;
     glm::vec3 refracti;
     glm::vec3 opacity;
@@ -40,13 +39,16 @@ struct Material {
 };
 
 struct Triangle {
-    glm::vec3 p[3];
-    glm::vec3 n[3];
-    glm::vec2 texCoords[3];
-    glm::mat3 TBN[3];
-    glm::vec3 normal;           // texture: (-id-1, width, height) none: (-1, -1, -1)
-    glm::vec3 height;           // texture: (-id-1, width, height) none: (-1, -1, -1)
-    Material material;
+    float v[3];             // index of Vertex array
+};
+
+struct Vertex {
+    glm::vec3 pos;
+    glm::vec3 normal;           // texture: (-id-2, width, height) normal: (n1, n2, n3)
+    glm::vec2 texCoords;
+    float materialID;
+    glm::vec3 tangent;
+    glm::vec3 bitangent;
 };
 
 struct BVHNode {
@@ -59,36 +61,36 @@ struct BVHNode {
 
 // help function
 // ------------------
-bool cmpx(const Triangle& t1, const Triangle& t2)
+bool cmpx(const std::vector<Vertex>& vertices, const Triangle& t1, const Triangle& t2)
 {
-    glm::vec3 center1 = (t1.p[0] + t1.p[1] + t1.p[2]);
-    glm::vec3 center2 = (t2.p[0] + t2.p[1] + t2.p[2]);
+    glm::vec3 center1 = (vertices[t1.v[0]].pos + vertices[t1.v[1]].pos + vertices[t1.v[2]].pos);
+    glm::vec3 center2 = (vertices[t2.v[0]].pos + vertices[t2.v[1]].pos + vertices[t2.v[2]].pos);
     return center1.x < center2.x;
 }
-bool cmpy(const Triangle& t1, const Triangle& t2)
+bool cmpy(const std::vector<Vertex>& vertices, const Triangle& t1, const Triangle& t2)
 {
-    glm::vec3 center1 = (t1.p[0] + t1.p[1] + t1.p[2]);
-    glm::vec3 center2 = (t2.p[0] + t2.p[1] + t2.p[2]);
+    glm::vec3 center1 = (vertices[t1.v[0]].pos + vertices[t1.v[1]].pos + vertices[t1.v[2]].pos);
+    glm::vec3 center2 = (vertices[t2.v[0]].pos + vertices[t2.v[1]].pos + vertices[t2.v[2]].pos);
     return center1.y < center2.y;
 }
-bool cmpz(const Triangle& t1, const Triangle& t2)
+bool cmpz(const std::vector<Vertex>& vertices, const Triangle& t1, const Triangle& t2)
 {
-    glm::vec3 center1 = (t1.p[0] + t1.p[1] + t1.p[2]);
-    glm::vec3 center2 = (t2.p[0] + t2.p[1] + t2.p[2]);
+    glm::vec3 center1 = (vertices[t1.v[0]].pos + vertices[t1.v[1]].pos + vertices[t1.v[2]].pos);
+    glm::vec3 center2 = (vertices[t2.v[0]].pos + vertices[t2.v[1]].pos + vertices[t2.v[2]].pos);
     return center1.z < center2.z;
 }
 glm::vec3 minVec3(glm::vec3 v1, glm::vec3 v2, glm::vec3 v3)
 {
-    float minx = min(v1.x, min(v2.x, v3.x));
-    float miny = min(v1.y, min(v2.y, v3.y));
-    float minz = min(v1.z, min(v2.z, v3.z));
+    float minx = std::min(v1.x, std::min(v2.x, v3.x));
+    float miny = std::min(v1.y, std::min(v2.y, v3.y));
+    float minz = std::min(v1.z, std::min(v2.z, v3.z));
     return glm::vec3(minx, miny, minz);
 }
 glm::vec3 maxVec3(glm::vec3 v1, glm::vec3 v2, glm::vec3 v3)
 {
-    float maxx = max(v1.x, max(v2.x, v3.x));
-    float maxy = max(v1.y, max(v2.y, v3.y));
-    float maxz = max(v1.z, max(v2.z, v3.z));
+    float maxx = std::max(v1.x, std::max(v2.x, v3.x));
+    float maxy = std::max(v1.y, std::max(v2.y, v3.y));
+    float maxz = std::max(v1.z, std::max(v2.z, v3.z));
     return glm::vec3(maxx, maxy, maxz);
 }
 
@@ -97,19 +99,24 @@ glm::vec3 maxVec3(glm::vec3 v1, glm::vec3 v2, glm::vec3 v3)
 class Scene
 {
 public:
-    vector<Texture> textures_loaded;
-    vector<Triangle> triangles;
-    vector<BVHNode> bvhNodes;
-    vector<glm::vec3> vertices;
-    vector<unsigned int> indices;
+    std::vector<Texture> textures_loaded;
+    std::vector<Triangle> meshTriangles;
+    std::vector<Triangle> lightTriangles;
+    std::vector<Material> materials;
+    std::vector<Vertex> vertices;
+    std::vector<BVHNode> meshNodes;
+    std::vector<BVHNode> lightNodes;
+    std::vector<unsigned int> indices;
     glm::mat4 model;
-    string directory;
+    std::string directory;
     bool gammaCorrection;
-    unsigned int VAO, VBO, EBO, trianglesTextureBuffer, bvhTextureBuffer, texture_array;
+    unsigned int VAO, VBO, EBO;
+    unsigned int verticesTextureBuffer, meshTrianglesTextureBuffer, lightTrianglesTextureBuffer, materialsTextureBuffer, meshBVHTextureBuffer;
+    unsigned int texture_array;
     const int MAXWIDTH = 4096, MAXHEIGHT = 4096, MAXNUM = 32;
 
     // constructor, expects a filepath to a 3D model.
-    Scene(string const &path, unsigned int pFlags, glm::mat4 model = glm::mat4(1.0f), bool gamma = false) : model(model), gammaCorrection(gamma)
+    Scene(std::string const &path, unsigned int pFlags, glm::mat4 model = glm::mat4(1.0f), bool gamma = false) : model(model), gammaCorrection(gamma)
     {
         glGenTextures(1, &texture_array);
         glActiveTexture(GL_TEXTURE0 + texture_array);
@@ -125,19 +132,36 @@ public:
         glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
         glActiveTexture(0);
 
-        buildBVHwithSAH(0, triangles.size() - 1, 1);
+        buildBVHwithSAH(meshTriangles, meshNodes, 0, meshTriangles.size() - 1, 1);
 
-        loadTriangles();
-        loadBVHNodes();
+        loadVertices();
+        loadMeshTriangles();
+        loadLightTriangles();
+        loadMaterials();
+        loadMeshBVHNodes();
+    }
+
+    ~Scene()
+    {
+        glDeleteTextures(1, &texture_array);
+        glDeleteTextures(1, &meshBVHTextureBuffer);
+        glDeleteTextures(1, &meshTrianglesTextureBuffer);
+        glDeleteTextures(1, &verticesTextureBuffer);
+        glDeleteVertexArrays(1, &VAO);
+        glDeleteBuffers(1, &VBO);
+        glDeleteBuffers(1, &EBO);
     }
 
     void loadShader(Shader &shader)
     {
+        shader.use();
         shader.setInt("texturesArray", texture_array);
-        shader.setInt("triangles", trianglesTextureBuffer);
-        shader.setInt("nTriangles", triangles.size());
-        shader.setInt("bvhNodes", bvhTextureBuffer);
-        shader.setInt("nNodes", bvhNodes.size());
+        shader.setInt("vertices", verticesTextureBuffer);
+        shader.setInt("meshTriangles", meshTrianglesTextureBuffer);
+        shader.setInt("lightTriangles", lightTrianglesTextureBuffer);
+        shader.setInt("nlightTriangles", lightTriangles.size());
+        shader.setInt("materials", materialsTextureBuffer);
+        shader.setInt("meshBVHNodes", meshBVHTextureBuffer);
     }
 
     // draws the scene
@@ -149,14 +173,14 @@ public:
     }
     
 private:
-    void loadScene(string const &path, unsigned int pFlags)
+    void loadScene(std::string const &path, unsigned int pFlags)
     {
         // read file via ASSIMP
         Assimp::Importer importer;
         const aiScene* scene = importer.ReadFile(path, pFlags);
         // check for errors
         if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) { // if is Not Zero 
-            cout << "ERROR::ASSIMP:: " << importer.GetErrorString() << endl;
+            std::cout << "ERROR::ASSIMP:: " << importer.GetErrorString() << std::endl;
             return;
         }
         // retrieve the directory path of the filepath
@@ -169,28 +193,67 @@ private:
     }
 
     // load triangles into texture buffer
-    void loadTriangles()
+    void loadVertices()
     {
         GLuint tbo;
         glGenBuffers(1, &tbo);
         glBindBuffer(GL_TEXTURE_BUFFER, tbo);
-        glBufferData(GL_TEXTURE_BUFFER, triangles.size() * sizeof(Triangle), &triangles[0], GL_STATIC_DRAW);
-        glGenTextures(1, &trianglesTextureBuffer);
-        glActiveTexture(GL_TEXTURE0 + trianglesTextureBuffer);
-        glBindTexture(GL_TEXTURE_BUFFER, trianglesTextureBuffer);
+        glBufferData(GL_TEXTURE_BUFFER, vertices.size() * sizeof(Vertex), &vertices[0], GL_STATIC_DRAW);
+        glGenTextures(1, &verticesTextureBuffer);
+        glActiveTexture(GL_TEXTURE0 + verticesTextureBuffer);
+        glBindTexture(GL_TEXTURE_BUFFER, verticesTextureBuffer);
         glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, tbo);
         glActiveTexture(0);
     }
 
-    void loadBVHNodes()
+    void loadMeshTriangles()
     {
         GLuint tbo;
         glGenBuffers(1, &tbo);
         glBindBuffer(GL_TEXTURE_BUFFER, tbo);
-        glBufferData(GL_TEXTURE_BUFFER, bvhNodes.size() * sizeof(BVHNode), &bvhNodes[0], GL_STATIC_DRAW);
-        glGenTextures(1, &bvhTextureBuffer);
-        glActiveTexture(GL_TEXTURE0 + bvhTextureBuffer);
-        glBindTexture(GL_TEXTURE_BUFFER, bvhTextureBuffer);
+        glBufferData(GL_TEXTURE_BUFFER, meshTriangles.size() * sizeof(Triangle), &meshTriangles[0], GL_STATIC_DRAW);
+        glGenTextures(1, &meshTrianglesTextureBuffer);
+        glActiveTexture(GL_TEXTURE0 + meshTrianglesTextureBuffer);
+        glBindTexture(GL_TEXTURE_BUFFER, meshTrianglesTextureBuffer);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, tbo);
+        glActiveTexture(0);
+    }
+
+    void loadLightTriangles()
+    {
+        GLuint tbo;
+        glGenBuffers(1, &tbo);
+        glBindBuffer(GL_TEXTURE_BUFFER, tbo);
+        glBufferData(GL_TEXTURE_BUFFER, lightTriangles.size() * sizeof(Triangle), &lightTriangles[0], GL_STATIC_DRAW);
+        glGenTextures(1, &lightTrianglesTextureBuffer);
+        glActiveTexture(GL_TEXTURE0 + lightTrianglesTextureBuffer);
+        glBindTexture(GL_TEXTURE_BUFFER, lightTrianglesTextureBuffer);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, tbo);
+        glActiveTexture(0);
+    }
+
+    void loadMaterials()
+    {
+        GLuint tbo;
+        glGenBuffers(1, &tbo);
+        glBindBuffer(GL_TEXTURE_BUFFER, tbo);
+        glBufferData(GL_TEXTURE_BUFFER, materials.size() * sizeof(Material), &materials[0], GL_STATIC_DRAW);
+        glGenTextures(1, &materialsTextureBuffer);
+        glActiveTexture(GL_TEXTURE0 + materialsTextureBuffer);
+        glBindTexture(GL_TEXTURE_BUFFER, materialsTextureBuffer);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, tbo);
+        glActiveTexture(0);
+    }
+
+    void loadMeshBVHNodes()
+    {
+        GLuint tbo;
+        glGenBuffers(1, &tbo);
+        glBindBuffer(GL_TEXTURE_BUFFER, tbo);
+        glBufferData(GL_TEXTURE_BUFFER, meshNodes.size() * sizeof(BVHNode), &meshNodes[0], GL_STATIC_DRAW);
+        glGenTextures(1, &meshBVHTextureBuffer);
+        glActiveTexture(GL_TEXTURE0 + meshBVHTextureBuffer);
+        glBindTexture(GL_TEXTURE_BUFFER, meshBVHTextureBuffer);
         glTexBuffer(GL_TEXTURE_BUFFER, GL_RGB32F, tbo);
         glActiveTexture(0);
     }
@@ -228,6 +291,9 @@ private:
         mat.transmission = loadMaterialTextures(material, aiTextureType_TRANSMISSION, AI_MATKEY_COLOR_TRANSPARENT);
         mat.anisotropy = loadMaterialTextures(material, aiTextureType_UNKNOWN, AI_MATKEY_ANISOTROPY_FACTOR);
 
+        int matID = this->materials.size();
+        this->materials.push_back(mat);
+
         glm::vec3 norm = loadMaterialTextures(material, aiTextureType_NORMALS);
         glm::vec3 bump = loadMaterialTextures(material, aiTextureType_HEIGHT);
 
@@ -235,60 +301,57 @@ private:
         for (unsigned int i = 0; i < mesh->mNumFaces; i++) {
             aiFace face = mesh->mFaces[i];
             Triangle t;
-            t.material = mat;
-            t.normal = norm;
-            t.height = bump;
             // retrieve all indices of the face and store them in the indices vector
             for (unsigned int j = 0; j < face.mNumIndices; j ++) {
-                glm::vec3 vector, tangent, bitangent;
-                glm::vec2 vec;
-                // position
-                vector.x = mesh->mVertices[face.mIndices[j]].x;
-                vector.y = mesh->mVertices[face.mIndices[j]].y;
-                vector.z = mesh->mVertices[face.mIndices[j]].z;
-                t.p[j] = glm::vec3(this->model * glm::vec4(vector, 0.0));
-                // normal
-                vector.x = mesh->mNormals[face.mIndices[j]].x;
-                vector.y = mesh->mNormals[face.mIndices[j]].y;
-                vector.z = mesh->mNormals[face.mIndices[j]].z;
-                t.n[j] = glm::normalize(glm::transpose(glm::inverse(glm::mat3(this->model))) * vector);
-                // texture coordinates
-                vec.x = mesh->mTextureCoords[0][face.mIndices[j]].x;
-                vec.y = mesh->mTextureCoords[0][face.mIndices[j]].y;
-                t.texCoords[j] = vec;
-                // tangent
-                tangent.x = mesh->mTangents[face.mIndices[j]].x;
-                tangent.y = mesh->mTangents[face.mIndices[j]].y;
-                tangent.z = mesh->mTangents[face.mIndices[j]].z;
-                // bitangent
-                bitangent.x = mesh->mBitangents[face.mIndices[j]].x;
-                bitangent.y = mesh->mBitangents[face.mIndices[j]].y;
-                bitangent.z = mesh->mBitangents[face.mIndices[j]].z;
-
-                t.TBN[j] = calcTBN(tangent, bitangent, t.n[j]);
-
+                t.v[j] = face.mIndices[j] + this->vertices.size();
                 this->indices.push_back(face.mIndices[j] + this->vertices.size());
             }
-            triangles.push_back(t);
+            this->meshTriangles.push_back(t);
+            if (mat.emissive.x > 0 || mat.emissive.y > 0 || mat.emissive.z > 0) {
+                this->lightTriangles.push_back(t);
+            }
         }
 
         // walk through each of the mesh's vertices
         for (unsigned int i = 0; i < mesh->mNumVertices; i++) {
+            Vertex vertex;
+
             glm::vec3 vector;
+            glm::vec2 vec;
+            // position
             vector.x = mesh->mVertices[i].x;
             vector.y = mesh->mVertices[i].y;
             vector.z = mesh->mVertices[i].z;
+            vertex.pos = glm::vec3(this->model * glm::vec4(vector, 1));
+            // normal
+            if (norm.y < 0 && norm.z < 0) {
+                vector.x = mesh->mNormals[i].x;
+                vector.y = mesh->mNormals[i].y;
+                vector.z = mesh->mNormals[i].z;
+                vertex.normal = glm::mat3(this->model) * vector;
+            }
+            else {
+                vertex.normal = norm;
+            }
+            // texcoord
+            vec.x = mesh->mTextureCoords[0][i].x;
+            vec.y = mesh->mTextureCoords[0][i].y;
+            vertex.texCoords = vec;
+            // matID
+            vertex.materialID = matID;
+            // tangent
+            vector.x = mesh->mTangents[i].x;
+            vector.y = mesh->mTangents[i].y;
+            vector.z = mesh->mTangents[i].z;
+            vertex.tangent = glm::mat3(this->model) * vector;
+            // bitangent
+            vector.x = mesh->mBitangents[i].x;
+            vector.y = mesh->mBitangents[i].y;
+            vector.z = mesh->mBitangents[i].z;
+            vertex.bitangent = glm::mat3(this->model) * vector;
 
-            vertices.push_back(glm::vec3(this->model * glm::vec4(vector, 0.0)));
+            this->vertices.push_back(vertex);
         }
-    }
-
-    glm::mat3 calcTBN(glm::vec3 tangent, glm::vec3 bitangent, glm::vec3 normal)
-    {
-        glm::vec3 T = glm::normalize(glm::transpose(glm::inverse(glm::mat3(this->model))) * tangent);
-        glm::vec3 B = glm::normalize(glm::transpose(glm::inverse(glm::mat3(this->model))) * bitangent);
-        glm::vec3 N = glm::normalize(normal);
-        return glm::mat3(T, B, N);
     }
 
     // load material from file or rgb into texture
@@ -323,7 +386,7 @@ private:
     // load texture from file
     glm::vec3 TextureFromFile(const char *path)
     {
-        string filename = string(path);
+        std::string filename = std::string(path);
         filename = directory + '/' + filename;
 
         int width, height, nrComponents;
@@ -339,7 +402,7 @@ private:
 
             glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, textures_loaded.size(), width, height, 1, format, GL_UNSIGNED_BYTE, data);
             stbi_image_free(data);
-            return glm::vec3(-1.0-textures_loaded.size(), (float)width / MAXWIDTH, (float)height / MAXHEIGHT);
+            return glm::vec3(-2.0 - textures_loaded.size(), (float)width / MAXWIDTH, (float)height / MAXHEIGHT);
         }
         else {
             std::cout << "Texture failed to load at path: " << path << std::endl;
@@ -357,34 +420,40 @@ private:
         glBindVertexArray(VAO);
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
 
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec3), &vertices[0], GL_STATIC_DRAW);  
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), &vertices[0], GL_STATIC_DRAW);  
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
 
-        glEnableVertexAttribArray(0);	
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(3 * sizeof(float)));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(6 * sizeof(float)));
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)(8 * sizeof(float)));
 
         glBindVertexArray(0);
     }
 
     // BVH with SAH
-    int buildBVHwithSAH(int l, int r, int n) {
+    int buildBVHwithSAH(std::vector<Triangle>& triangles, std::vector<BVHNode>& bvhNodes, int l, int r, int n) {
         if (l > r) return 0;
 
         BVHNode root;
         bvhNodes.push_back(root);
         int id = bvhNodes.size() - 1;
         bvhNodes[id].left = bvhNodes[id].right = bvhNodes[id].n = bvhNodes[id].index1 = bvhNodes[id].index2 = bvhNodes[id].parent = 0;
-        bvhNodes[id].AA = triangles[l].p[0];
-        bvhNodes[id].BB = triangles[l].p[0];
+        bvhNodes[id].AA = this->vertices[triangles[l].v[0]].pos;
+        bvhNodes[id].BB = this->vertices[triangles[l].v[0]].pos;
 
         // count AABB
         for (int i = l; i <= r; i++) {
-            bvhNodes[id].AA = minVec3(bvhNodes[id].AA, triangles[i].p[0], triangles[i].p[1]);
-            bvhNodes[id].AA = minVec3(bvhNodes[id].AA, triangles[i].p[1], triangles[i].p[2]);
-            bvhNodes[id].BB = maxVec3(bvhNodes[id].BB, triangles[i].p[0], triangles[i].p[1]);
-            bvhNodes[id].BB = maxVec3(bvhNodes[id].BB, triangles[i].p[1], triangles[i].p[2]);
+            bvhNodes[id].AA = minVec3(bvhNodes[id].AA, this->vertices[triangles[i].v[0]].pos, this->vertices[triangles[i].v[1]].pos);
+            bvhNodes[id].AA = minVec3(bvhNodes[id].AA, this->vertices[triangles[i].v[1]].pos, this->vertices[triangles[i].v[2]].pos);
+            bvhNodes[id].BB = maxVec3(bvhNodes[id].BB, this->vertices[triangles[i].v[0]].pos, this->vertices[triangles[i].v[1]].pos);
+            bvhNodes[id].BB = maxVec3(bvhNodes[id].BB, this->vertices[triangles[i].v[1]].pos, this->vertices[triangles[i].v[2]].pos);
         }
 
         // nTriangles <= n
@@ -401,29 +470,29 @@ private:
         int Split = (l + r) / 2;
         for (int axis = 0; axis < 3; axis ++) {
             // sort in x，y，z axis
-            if (axis == 0) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpx);
-            if (axis == 1) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpy);
-            if (axis == 2) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpz);
+            if (axis == 0) std::sort(&triangles[0] + l, &triangles[0] + r + 1, [this](const Triangle& t1, const Triangle& t2){return cmpx(this->vertices, t1, t2);});
+            if (axis == 1) std::sort(&triangles[0] + l, &triangles[0] + r + 1, [this](const Triangle& t1, const Triangle& t2){return cmpy(this->vertices, t1, t2);});
+            if (axis == 2) std::sort(&triangles[0] + l, &triangles[0] + r + 1, [this](const Triangle& t1, const Triangle& t2){return cmpz(this->vertices, t1, t2);});
 
-            std::vector<glm::vec3> leftAA = {minVec3(triangles[l].p[0], triangles[l].p[1], triangles[l].p[2])};
-            std::vector<glm::vec3> leftBB = {maxVec3(triangles[l].p[0], triangles[l].p[1], triangles[l].p[2])};
+            std::vector<glm::vec3> leftAA = {minVec3(this->vertices[triangles[l].v[0]].pos, this->vertices[triangles[l].v[1]].pos, this->vertices[triangles[l].v[2]].pos)};
+            std::vector<glm::vec3> leftBB = {maxVec3(this->vertices[triangles[l].v[0]].pos, this->vertices[triangles[l].v[1]].pos, this->vertices[triangles[l].v[2]].pos)};
             for (int i = l + 1; i < r; i ++) {
-                glm::vec3 AA = minVec3(leftAA[i - l - 1], triangles[i].p[0], triangles[i].p[1]);
-                AA = minVec3(AA, triangles[i].p[1], triangles[i].p[2]);
-                glm::vec3 BB = maxVec3(leftBB[i - l - 1], triangles[i].p[0], triangles[i].p[1]);
-                BB = maxVec3(BB, triangles[i].p[1], triangles[i].p[2]);
+                glm::vec3 AA = minVec3(leftAA[i - l - 1], this->vertices[triangles[i].v[0]].pos, this->vertices[triangles[i].v[1]].pos);
+                AA = minVec3(AA, this->vertices[triangles[i].v[1]].pos, this->vertices[triangles[i].v[2]].pos);
+                glm::vec3 BB = maxVec3(leftBB[i - l - 1], this->vertices[triangles[i].v[0]].pos, this->vertices[triangles[i].v[1]].pos);
+                BB = maxVec3(BB, this->vertices[triangles[i].v[1]].pos, this->vertices[triangles[i].v[2]].pos);
 
                 leftAA.push_back(AA);
                 leftBB.push_back(BB);
             }
 
-            std::vector<glm::vec3> rightAA = {minVec3(triangles[r].p[0], triangles[r].p[1], triangles[r].p[2])};
-            std::vector<glm::vec3> rightBB = {maxVec3(triangles[r].p[0], triangles[r].p[1], triangles[r].p[2])};
+            std::vector<glm::vec3> rightAA = {minVec3(this->vertices[triangles[r].v[0]].pos, this->vertices[triangles[r].v[1]].pos, this->vertices[triangles[r].v[2]].pos)};
+            std::vector<glm::vec3> rightBB = {maxVec3(this->vertices[triangles[r].v[0]].pos, this->vertices[triangles[r].v[1]].pos, this->vertices[triangles[r].v[2]].pos)};
             for (int i = r - 1; i > l; i --) {
-                glm::vec3 AA = minVec3(rightAA[r - i - 1], triangles[i].p[0], triangles[i].p[1]);
-                AA = minVec3(AA, triangles[i].p[1], triangles[i].p[2]);
-                glm::vec3 BB = maxVec3(rightBB[r - i - 1], triangles[i].p[0], triangles[i].p[1]);
-                BB = maxVec3(BB, triangles[i].p[1], triangles[i].p[2]);
+                glm::vec3 AA = minVec3(rightAA[r - i - 1], this->vertices[triangles[i].v[0]].pos, this->vertices[triangles[i].v[1]].pos);
+                AA = minVec3(AA, this->vertices[triangles[i].v[1]].pos, this->vertices[triangles[i].v[2]].pos);
+                glm::vec3 BB = maxVec3(rightBB[r - i - 1], this->vertices[triangles[i].v[0]].pos, this->vertices[triangles[i].v[1]].pos);
+                BB = maxVec3(BB, this->vertices[triangles[i].v[1]].pos, this->vertices[triangles[i].v[2]].pos);
 
                 rightAA.push_back(AA);
                 rightBB.push_back(BB);
@@ -458,12 +527,12 @@ private:
             }
         }
 
-        if (Axis == 0) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpx);
-        if (Axis == 1) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpy);
-        if (Axis == 2) std::sort(&triangles[0] + l, &triangles[0] + r + 1, cmpz);
+        if (Axis == 0) std::sort(&triangles[0] + l, &triangles[0] + r + 1, [this](const Triangle& t1, const Triangle& t2){return cmpx(this->vertices, t1, t2);});
+        if (Axis == 1) std::sort(&triangles[0] + l, &triangles[0] + r + 1, [this](const Triangle& t1, const Triangle& t2){return cmpy(this->vertices, t1, t2);});
+        if (Axis == 2) std::sort(&triangles[0] + l, &triangles[0] + r + 1, [this](const Triangle& t1, const Triangle& t2){return cmpz(this->vertices, t1, t2);});
 
-        int left  = buildBVHwithSAH(l, Split, n);
-        int right = buildBVHwithSAH(Split + 1, r, n);
+        int left  = buildBVHwithSAH(triangles, bvhNodes, l, Split, n);
+        int right = buildBVHwithSAH(triangles, bvhNodes, Split + 1, r, n);
 
         bvhNodes[left].parent = id;
         bvhNodes[right].parent = id;

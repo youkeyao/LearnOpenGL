@@ -5,28 +5,30 @@ in vec3 FragCoord;
 in mat4 inverse_projection;
 in mat4 inverse_view;
 
-uniform bool isRealTime;
 uniform float screenWidth;
 uniform float screenHeight;
 
 uniform int frameCounter;
 
 uniform sampler2DArray texturesArray;
-uniform samplerBuffer triangles;
-uniform int nTriangles;
-uniform samplerBuffer bvhNodes;
-uniform int nNodes;
+uniform samplerBuffer vertices;
+uniform samplerBuffer meshTriangles;
+uniform samplerBuffer lightTriangles;
+uniform int nlightTriangles;
+uniform samplerBuffer materials;
+uniform samplerBuffer meshBVHNodes;
 
-uniform sampler2D lastFrame;
 uniform sampler2D hdrMap;
 uniform vec3 viewPos;
 
 #define STACKSIZE 64
 #define SAMPLENUM 1
+#define BOUNCENUM 2
 #define PI 3.14159265359
+#define EPISILON 0.000001
 
 struct Material {
-    vec3 ambient;       // texture: (-id-1, width, height) color: (r, g, b)
+    vec3 ambient;       // texture: (-id-2, width, height) color: (r, g, b)
     vec3 diffuse;
     vec3 specular;
     vec3 emissive;
@@ -41,11 +43,10 @@ struct Material {
 
 struct Triangle {
     vec3 p[3];
-    vec3 n[3];
+    vec3 n[3];          // texture: (-id-2, width, height) normal: (n1, n2, n3)
     vec2 texCoords[3];
-    mat3 TBN[3];
-    vec3 normal;        // texture: (-id-1, width, height) none: (-1, -1, -1)
-    vec3 height;        // texture: (-id-1, width, height) none: (-1, -1, -1)
+    vec3 tangent[3];
+    vec3 bitangent[3];
 };
 
 struct BVHNode {
@@ -119,61 +120,72 @@ vec3 SampleGTR2(vec3 V, float alpha, mat3 TBN)
     return L;
 }
 
-Triangle getTriangle(int i)
+// type: 0-mesh, 1-light
+Triangle getTriangle(int i, int type)
 {
-    int offset = i * 29;
+    vec3 vids;
+    if (type == 0) {
+        vids = texelFetch(meshTriangles, i).rgb;
+    }
+    else {
+        vids = texelFetch(lightTriangles, i).rgb;
+    }
+    int v1 = int(vids.x);
+    int v2 = int(vids.y);
+    int v3 = int(vids.z);
+
     Triangle t;
 
-    t.p[0] = texelFetch(triangles, offset + 0).xyz;
-    t.p[1] = texelFetch(triangles, offset + 1).xyz;
-    t.p[2] = texelFetch(triangles, offset + 2).xyz;
+    t.p[0] = texelFetch(vertices, v1 * 5 + 0).xyz;
+    t.p[1] = texelFetch(vertices, v2 * 5 + 0).xyz;
+    t.p[2] = texelFetch(vertices, v3 * 5 + 0).xyz;
 
-    t.n[0] = texelFetch(triangles, offset + 3).xyz;
-    t.n[1] = texelFetch(triangles, offset + 4).xyz;
-    t.n[2] = texelFetch(triangles, offset + 5).xyz;
+    t.n[0] = texelFetch(vertices, v1 * 5 + 1).xyz;
+    t.n[1] = texelFetch(vertices, v2 * 5 + 1).xyz;
+    t.n[2] = texelFetch(vertices, v3 * 5 + 1).xyz;
 
-    t.texCoords[0] = texelFetch(triangles, offset + 6).xy;
-    t.texCoords[1] = vec2(texelFetch(triangles, offset + 6).z, texelFetch(triangles, offset + 7).x);
-    t.texCoords[2] = texelFetch(triangles, offset + 7).yz;
+    t.texCoords[0] = texelFetch(vertices, v1 * 5 + 2).xy;
+    t.texCoords[1] = texelFetch(vertices, v2 * 5 + 2).xy;
+    t.texCoords[2] = texelFetch(vertices, v3 * 5 + 2).xy;
 
-    t.TBN[0] = mat3(texelFetch(triangles, offset + 8).xyz, texelFetch(triangles, offset + 9).xyz, texelFetch(triangles, offset + 10).xyz);
-    t.TBN[1] = mat3(texelFetch(triangles, offset + 11).xyz, texelFetch(triangles, offset + 12).xyz, texelFetch(triangles, offset + 13).xyz);
-    t.TBN[2] = mat3(texelFetch(triangles, offset + 14).xyz, texelFetch(triangles, offset + 15).xyz, texelFetch(triangles, offset + 16).xyz);
+    t.tangent[0] = texelFetch(vertices, v1 * 5 + 3).xyz;
+    t.tangent[1] = texelFetch(vertices, v2 * 5 + 3).xyz;
+    t.tangent[2] = texelFetch(vertices, v3 * 5 + 3).xyz;
 
-    t.normal = texelFetch(triangles, offset + 17).xyz;
-    t.height = texelFetch(triangles, offset + 18).xyz;
+    t.bitangent[0] = texelFetch(vertices, v1 * 5 + 4).xyz;
+    t.bitangent[1] = texelFetch(vertices, v2 * 5 + 4).xyz;
+    t.bitangent[2] = texelFetch(vertices, v3 * 5 + 4).xyz;
 
     return t;
 }
 
 vec3 getColor(int pos, vec2 texCoords)
 {
-    vec3 t = texelFetch(triangles, pos).xyz;
+    vec3 t = texelFetch(materials, pos).xyz;
     if (t.x < 0) {
-        return texture2DArray(texturesArray, vec3(texCoords * t.yz, - t.x - 1)).rgb;
+        return texture2DArray(texturesArray, vec3(texCoords * t.yz, - t.x - 2)).rgb;
     }
     else {
         return t;
     }
 }
 
-Material getMaterial(int i, vec2 texCoords)
+Material getMaterial(int matID, vec2 texCoords)
 {
-    int offset = i * 29;
+    int offset = matID * 10;
     Material m;
-    vec3 tmp;
 
-    m.ambient = getColor(offset + 19, texCoords);
-    m.diffuse = getColor(offset + 20, texCoords);
-    m.specular = getColor(offset + 21, texCoords);
-    m.emissive = getColor(offset + 22, texCoords);
-    m.shininess = getColor(offset + 23, texCoords).x;
+    m.ambient = getColor(offset + 0, texCoords);
+    m.diffuse = getColor(offset + 1, texCoords);
+    m.specular = getColor(offset + 2, texCoords);
+    m.emissive = getColor(offset + 3, texCoords);
+    m.shininess = getColor(offset + 4, texCoords).x;
     m.roughness = 1 - m.shininess / 1000;
-    m.metallic = getColor(offset + 24, texCoords).x;
-    m.refracti = getColor(offset + 25, texCoords).x;
-    m.opacity = getColor(offset + 26, texCoords).x;
-    m.transmission = getColor(offset + 27, texCoords);
-    m.anisotropy = getColor(offset + 28, texCoords).x;
+    m.metallic = getColor(offset + 5, texCoords).x;
+    m.refracti = getColor(offset + 6, texCoords).x;
+    m.opacity = getColor(offset + 7, texCoords).x;
+    m.transmission = getColor(offset + 8, texCoords);
+    m.anisotropy = getColor(offset + 9, texCoords).x;
 
     return m;
 }
@@ -183,14 +195,14 @@ BVHNode getBVHNode(int i)
     int offset = i * 4;
     BVHNode node;
 
-    node.left = int(texelFetch(bvhNodes, offset).x);
-    node.right = int(texelFetch(bvhNodes, offset).y);
-    node.n = int(texelFetch(bvhNodes, offset).z);
-    node.index1 = int(texelFetch(bvhNodes, offset + 1).x);
-    node.index2 = int(texelFetch(bvhNodes, offset + 1).y);
-    node.parent = int(texelFetch(bvhNodes, offset + 1).z);
-    node.AA = texelFetch(bvhNodes, offset + 2).xyz;
-    node.BB = texelFetch(bvhNodes, offset + 3).xyz;
+    node.left = int(texelFetch(meshBVHNodes, offset).x);
+    node.right = int(texelFetch(meshBVHNodes, offset).y);
+    node.n = int(texelFetch(meshBVHNodes, offset).z);
+    node.index1 = int(texelFetch(meshBVHNodes, offset + 1).x);
+    node.index2 = int(texelFetch(meshBVHNodes, offset + 1).y);
+    node.parent = int(texelFetch(meshBVHNodes, offset + 1).z);
+    node.AA = texelFetch(meshBVHNodes, offset + 2).xyz;
+    node.BB = texelFetch(meshBVHNodes, offset + 3).xyz;
 
     return node;
 }
@@ -210,7 +222,7 @@ HitResult hitTriangle(Triangle triangle, Ray ray)
 
     float SE = dot(S1, E1);
     // parallel
-    if (abs(SE) < 0.000001f) return res;
+    if (abs(SE) < EPISILON) return res;
 
     float invdet = 1 / SE;
     vec3 S = O - triangle.p[0];
@@ -233,24 +245,30 @@ HitResult hitTriangle(Triangle triangle, Ray ray)
     res.hitPoint = O + t * D;
     res.viewDir = D;
     res.texCoords = a * triangle.texCoords[0] + b * triangle.texCoords[1] + c * triangle.texCoords[2];
-    res.TBN = a * triangle.TBN[0] + b * triangle.TBN[1] + c * triangle.TBN[2];
+
+    vec3 tangent = a * triangle.tangent[0] + b * triangle.tangent[1] + c * triangle.tangent[2];
+    vec3 bitangent = a * triangle.bitangent[0] + b * triangle.bitangent[1] + c * triangle.bitangent[2];
 
     // count normal and TBN
-    if (triangle.normal.y < 0 && triangle.normal.z < 0) {
+    if (triangle.n[0].x > -1.5) {
         res.normal = a * triangle.n[0] + b * triangle.n[1] + c * triangle.n[2];
+        res.TBN = mat3(tangent, bitangent, res.normal);
     }
     else {
         // normal Map
-        res.normal = texture2DArray(texturesArray, vec3(res.texCoords * triangle.normal.yz, triangle.normal.x)).rgb;
+        vec3 tangent = a * triangle.tangent[0] + b * triangle.tangent[1] + c * triangle.tangent[2];
+        vec3 bitangent = a * triangle.bitangent[0] + b * triangle.bitangent[1] + c * triangle.bitangent[2];
+        res.normal = normalize(cross(tangent, bitangent));
+        res.TBN = mat3(tangent, bitangent, res.normal);
+        res.normal = texture2DArray(texturesArray, vec3(res.texCoords * triangle.n[0].yz, - triangle.n[0].x - 2)).rgb;
         res.normal = res.normal * 2.0 - 1.0;
         res.normal = res.TBN * res.normal;
     }
     
     if (dot(res.normal, D) > 0) res.normal = -res.normal;
     res.normal = normalize(res.normal);
-
-    vec3 tangent = normalize(cross(res.TBN * vec3(0, 1, 0), res.normal));
-    vec3 bitangent = normalize(cross(res.normal, tangent));
+    tangent = normalize(cross(res.TBN * vec3(0, 1, 0), res.normal));
+    bitangent = normalize(cross(res.normal, tangent));
     res.TBN = mat3(tangent, bitangent, res.normal);
 
     return res;
@@ -261,10 +279,12 @@ HitResult hitArray(Ray ray, int l, int r)
     HitResult res;
     res.isHit = false;
     for (int i = l; i <= r; i ++) {
-        Triangle triangle = getTriangle(i);
+        Triangle triangle = getTriangle(i, 0);
         HitResult newhit = hitTriangle(triangle, ray);
         if (newhit.isHit && (!res.isHit || newhit.distance < res.distance)) {
-            Material mat = getMaterial(i, newhit.texCoords);
+            int vertexID = int(texelFetch(meshTriangles, i).x);
+            int matID = int(texelFetch(vertices, vertexID * 5 + 2).z);
+            Material mat = getMaterial(matID, newhit.texCoords);
             if (rand() < mat.opacity) {
                 res = newhit;
                 res.material = mat;
@@ -292,6 +312,7 @@ float hitAABB(Ray r, vec3 AA, vec3 BB)
 }
 
 // search in BVH tree
+// type: 0-mesh, 1-light
 HitResult hitBVH(Ray ray)
 {
     HitResult res;
@@ -434,7 +455,40 @@ float BRDF_Pdf(vec3 V, vec3 N, vec3 L, mat3 TBN, Material material) {
     pdf = max(1e-10, pdf);
     return pdf;
 }
-vec3 SampleL(vec3 V, vec3 N, mat3 TBN, Material material)
+float Light_Pdf(vec3 startPoint)
+{
+    float S = 0;
+    for (int i = 0; i < nlightTriangles; i ++) {
+        Triangle triangle = getTriangle(i, 1);
+        vec3 G = (triangle.p[0] + triangle.p[1] + triangle.p[2]) / 3;
+        vec3 E1 = triangle.p[1] - triangle.p[0];
+        vec3 E2 = triangle.p[2] - triangle.p[0];
+        vec3 n = normalize(cross(E1, E2));
+
+        vec3 cross = vec3(E1.y * E2.z - E1.z * E2.y, E1.x * E2.z - E1.z * E2.x, E1.x * E2.y - E1.y * E2.x);
+        float s = length(cross);
+
+        S += s / pow(length(G - startPoint), 2);
+    }
+    float pdf = 1.0 / S;
+
+    return pdf;
+}
+vec3 SampleLightPos()
+{
+    int randTriID = int(rand() * nlightTriangles);
+
+    Triangle triangle = getTriangle(randTriID, 1);
+
+    float alpha = rand();
+    float beta = (1 - alpha) * rand();
+    float gama = 1 - alpha - beta;
+
+    vec3 endPoint = alpha * triangle.p[0] + beta * triangle.p[1] + gama * triangle.p[2];
+
+    return endPoint;
+}
+vec3 SampleIndirectL(vec3 V, vec3 N, mat3 TBN, Material material)
 {
     float alpha = max(0.001, sqr(material.roughness));
     
@@ -447,10 +501,10 @@ vec3 SampleL(vec3 V, vec3 N, mat3 TBN, Material material)
 
     float p = rand();
 
-    if(p <= p_diffuse) {
+    if (p <= p_diffuse) {
         return TBN * SampleHemisphere();
-    } 
-    else if(p <= p_diffuse + p_specular) {    
+    }
+    else if (p <= p_diffuse + p_specular) {    
         return SampleGTR2(V, alpha, TBN);
     }
     return vec3(0, 1, 0);
@@ -462,33 +516,59 @@ vec3 tracing(HitResult hit, int maxBounce)
     vec3 Lo = vec3(0);
     vec3 nowL = vec3(1);
 
-    for(int bounce=0; bounce<maxBounce; bounce++) {
+    for (int bounce=0; bounce<maxBounce; bounce++) {
+        if (length(hit.material.emissive) > 0) break;
+
         vec3 V = -hit.viewDir;
         vec3 N = hit.normal;
 
         Ray randomRay;
         randomRay.startPoint = hit.hitPoint;
 
+        vec3 L;
+        float NdotL;
+        vec3 f_r;
+        HitResult newHit;
+        float pdf;
+
+        // --------------------Direct Light------------------
+        vec3 endPoint = SampleLightPos();
+        L = normalize(endPoint - hit.hitPoint);
+        NdotL = dot(N, L);
+        if (NdotL > 0) {
+            randomRay.direction = L;
+            newHit = hitBVH(randomRay);
+
+            if (newHit.isHit && length(newHit.hitPoint - endPoint) < 0.001 && length(newHit.material.emissive) > 0) {
+                float Lcos = dot(newHit.normal, -L);
+                f_r = BRDF(V, N, L, hit.TBN, hit.material);
+                pdf = Light_Pdf(hit.hitPoint);
+                if (pdf <= 0.0) break;
+
+                Lo += nowL * newHit.material.emissive * f_r * NdotL * Lcos / pdf;
+            }
+        }
+        // --------------------------------------------------
+
+        // --------------------Indirect Light---------------
         // BRDF with importance sampling
-        vec3 L = SampleL(V, N, hit.TBN, hit.material); 
-        float NdotL = dot(N, L);
+        L = SampleIndirectL(V, N, hit.TBN, hit.material);
+        NdotL = dot(N, L);
         if (NdotL <= 0.0) break;
         
         randomRay.direction = L;
-        HitResult newHit = hitBVH(randomRay);
+        newHit = hitBVH(randomRay);
 
-        vec3 f_r = BRDF(V, N, L, hit.TBN, hit.material);
-        float pdf = BRDF_Pdf(V, N, L, hit.TBN, hit.material);
+        f_r = BRDF(V, N, L, hit.TBN, hit.material);
+        pdf = BRDF_Pdf(V, N, L, hit.TBN, hit.material);
         if (pdf <= 0.0) break;
 
-        if(!newHit.isHit) {
+        if (!newHit.isHit) {
             vec3 skyColor = sampleHdr(randomRay.direction);
             Lo += nowL * skyColor * f_r * NdotL / pdf;
             break;
         }
-        
-        vec3 Le = newHit.material.emissive;
-        Lo += nowL * Le * f_r * NdotL / pdf;             
+        // -----------------------------------------------------
 
         hit = newHit;
         nowL *= f_r * NdotL / pdf;
@@ -514,7 +594,7 @@ void main()
         HitResult first = hitBVH(ray);
 
         if (first.isHit) {
-            color += first.material.emissive + tracing(first, 2);
+            color += first.material.emissive + tracing(first, BOUNCENUM);
         }
         else {
             color += sampleHdr(ray.direction);
@@ -522,9 +602,5 @@ void main()
     }
 
     color /= SAMPLENUM;
-    vec3 lastColor = texture(lastFrame, (FragCoord.xy + 1) / 2).rgb;
-    if (!isRealTime) {
-        color = length(color) >= 0.0 ? mix(lastColor, color, 1.0/frameCounter) : lastColor;
-    }
     FragColor = vec4(color, 1.0);
 }

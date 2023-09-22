@@ -4,13 +4,19 @@
 #include <glad/glad.h>
 
 #include <vector>
-using namespace std;
+
+const GLenum drawBuffers[] = {
+    GL_COLOR_ATTACHMENT0,
+    GL_COLOR_ATTACHMENT1,
+    GL_COLOR_ATTACHMENT2,
+    GL_COLOR_ATTACHMENT3
+};
 
 class RenderPass
 {
 public:
     unsigned int VAO, VBO, FBO = 0;
-    vector<unsigned int> attachments;
+    std::vector<unsigned int> attachments;
     RenderPass(bool finalPass)
     {
         if (!finalPass) glGenFramebuffers(1, &FBO);
@@ -32,6 +38,14 @@ public:
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GLfloat), (GLvoid*)(3 * sizeof(GLfloat)));
         glBindVertexArray(0);
+    }
+
+    ~RenderPass()
+    {
+        glDeleteTextures(attachments.size(), attachments.data());
+        glDeleteVertexArrays(1, &VAO);
+        glDeleteBuffers(1, &VBO);
+        glDeleteBuffers(1, &FBO);
     }
 
     void bindData(unsigned int type, int width, int height)
@@ -56,10 +70,11 @@ public:
             glActiveTexture(0);
             attachments.push_back(colorAttachment);
         }
+        glDrawBuffers(attachments.size(), drawBuffers);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
-    void activeFramebuffer(vector<unsigned int> texPass = {})
+    void activeFramebuffer(std::vector<unsigned int> texPass = {})
     {
         glBindFramebuffer(GL_FRAMEBUFFER, FBO);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

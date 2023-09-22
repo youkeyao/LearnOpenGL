@@ -26,7 +26,7 @@ bool isFocus = true;
 bool isFocusRelease = true;
 
 // camera
-Camera camera(glm::vec3(0.0f, -4.0f, 15.0f));
+Camera camera(glm::vec3(0.0f, -4.0f, 7.0f));
 float lastX = SCR_WIDTH / 2.0f;
 float lastY = SCR_HEIGHT / 2.0f;
 bool firstMouse = true;
@@ -84,7 +84,8 @@ int main()
     // -------------------------
     Shader shaderGeometryPass((shadersDir + "gBuffer.vs").c_str(), (shadersDir + "gBuffer.fs").c_str());
     Shader shaderPathTracingPass((shadersDir + "common.vs").c_str(), (shadersDir + "pathtracing.fs").c_str());
-    Shader shaderMixPass((shadersDir + "common.vs").c_str(), (shadersDir + "mix.fs").c_str());
+    Shader shaderFilterPass((shadersDir + "common.vs").c_str(), (shadersDir + "filter.fs").c_str());
+    Shader shaderOutputPass((shadersDir + "common.vs").c_str(), (shadersDir + "output.fs").c_str());
     Shader shaderPostProcessPass((shadersDir + "common.vs").c_str(), (shadersDir + "postprocess.fs").c_str());
     shaderPathTracingPass.use();
     shaderPathTracingPass.setFloat("screenWidth", SCR_WIDTH);
@@ -94,7 +95,8 @@ int main()
     // -----------
     Scene scene(resourcesDir + "objects/testScene/testScene.obj", aiProcess_Triangulate | aiProcess_GenSmoothNormals | aiProcess_CalcTangentSpace | aiProcess_FlipUVs);
     scene.loadShader(shaderPathTracingPass);
-    cout << "scene loaded" << endl;
+    scene.loadShader(shaderGeometryPass);
+    std::cout << "scene loaded" << std::endl;
 
     // load the HDR environment map
     // ---------------------------------
@@ -127,11 +129,18 @@ int main()
     RenderPass geometryPass(false);
     geometryPass.bindData(GL_DEPTH_ATTACHMENT, SCR_WIDTH, SCR_HEIGHT);
     geometryPass.bindData(GL_COLOR_ATTACHMENT0, SCR_WIDTH, SCR_HEIGHT);
+    geometryPass.bindData(GL_COLOR_ATTACHMENT1, SCR_WIDTH, SCR_HEIGHT);
+    geometryPass.bindData(GL_COLOR_ATTACHMENT2, SCR_WIDTH, SCR_HEIGHT);
+    geometryPass.bindData(GL_COLOR_ATTACHMENT3, SCR_WIDTH, SCR_HEIGHT);
     RenderPass pathTracingPass(false);
     pathTracingPass.bindData(GL_COLOR_ATTACHMENT0, SCR_WIDTH, SCR_HEIGHT);
-    RenderPass mixPass(false);
-    mixPass.bindData(GL_COLOR_ATTACHMENT0, SCR_WIDTH, SCR_HEIGHT);
+    RenderPass filterPass(false);
+    filterPass.bindData(GL_COLOR_ATTACHMENT0, SCR_WIDTH, SCR_HEIGHT);
+    RenderPass outputPass(false);
+    outputPass.bindData(GL_COLOR_ATTACHMENT0, SCR_WIDTH, SCR_HEIGHT);
     RenderPass postProcessPass(true);
+
+    glm::mat4 pvMatrix = glm::mat4(1.0f);
 
     // render loop
     // -----------
@@ -158,40 +167,54 @@ int main()
         // ---------------------------------
         geometryPass.activeFramebuffer();
         shaderGeometryPass.use();
-        shaderGeometryPass.setMat4("projection", projection);
-        shaderGeometryPass.setMat4("view", view);
+        shaderGeometryPass.setMat4("prevPVMatrix", pvMatrix);
+        pvMatrix = projection * view;
+        shaderGeometryPass.setMat4("PVMatrix", pvMatrix);
         scene.draw();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
         // 2. PathTracing Pass: calculate lighting by iterating over a screen filled quad pixel-by-pixel using the gbuffer's content.
         // ---------------------------------
-        pathTracingPass.activeFramebuffer(mixPass.attachments);
+        pathTracingPass.activeFramebuffer();
         shaderPathTracingPass.use();
         shaderPathTracingPass.setMat4("projection", projection);
         shaderPathTracingPass.setMat4("view", view);
         shaderPathTracingPass.setVec3("viewPos", camera.Position);
-        shaderPathTracingPass.setInt("lastFrame", mixPass.attachments[0]);
         shaderPathTracingPass.setInt("hdrMap", hdrTexture);
         shaderPathTracingPass.setInt("frameCounter", frameCounter);
-        shaderPathTracingPass.setBool("isRealTime", isRealTime);
         pathTracingPass.draw();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        // 3. Mix Pass: mix with last frame
+        // 3. Filter Pass: denoise
         // ---------------------------------
-        mixPass.activeFramebuffer(geometryPass.attachments);
-        mixPass.activeFramebuffer(pathTracingPass.attachments);
-        shaderMixPass.use();
-        shaderMixPass.setInt("nowFrame", pathTracingPass.attachments[0]);
-        shaderMixPass.setInt("fragPos", geometryPass.attachments[0]);
-        mixPass.draw();
+        filterPass.activeFramebuffer(geometryPass.attachments);
+        filterPass.activeFramebuffer(pathTracingPass.attachments);
+        filterPass.activeFramebuffer(outputPass.attachments);
+        shaderFilterPass.use();
+        shaderFilterPass.setInt("fragPos", geometryPass.attachments[0]);
+        shaderFilterPass.setInt("fragNorm", geometryPass.attachments[1]);
+        shaderFilterPass.setInt("fragAlbedo", geometryPass.attachments[2]);
+        shaderFilterPass.setInt("motionVecRoughness", geometryPass.attachments[3]);
+        shaderFilterPass.setInt("nowFrame", pathTracingPass.attachments[0]);
+        shaderFilterPass.setInt("lastFrame", outputPass.attachments[0]);
+        shaderFilterPass.setInt("frameCounter", frameCounter);
+        shaderFilterPass.setBool("isRealTime", isRealTime);
+        filterPass.draw();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        // 4. Postprocess Pass: postprocess and render to screen
+        // 4. output Pass: output last frame
         // ---------------------------------
-        postProcessPass.activeFramebuffer(mixPass.attachments);
+        outputPass.activeFramebuffer(filterPass.attachments);
+        shaderOutputPass.use();
+        shaderOutputPass.setInt("nowFrame", filterPass.attachments[0]);
+        outputPass.draw();
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // 5. Postprocess Pass: postprocess and render to screen
+        // ---------------------------------
+        postProcessPass.activeFramebuffer(outputPass.attachments);
         shaderPostProcessPass.use();
-        shaderPostProcessPass.setInt("frame", mixPass.attachments[0]);
+        shaderPostProcessPass.setInt("frame", outputPass.attachments[0]);
         postProcessPass.draw();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -226,7 +249,7 @@ void processInput(GLFWwindow *window)
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
                 glfwSetCursorPosCallback(window, NULL);
             }
-            cout << "isFocus: " << isFocus << endl;
+            std::cout << "isFocus: " << isFocus << std::endl;
         }
     }
     else isFocusRelease = true;
@@ -244,7 +267,7 @@ void processInput(GLFWwindow *window)
             isRealTimeRelease = false;
             isRealTime = !isRealTime;
             frameCounter = 1;
-            cout << "isRealTime: " << isRealTime << endl;
+            std::cout << "isRealTime: " << isRealTime << std::endl;
         }
     }
     else isRealTimeRelease = true;
